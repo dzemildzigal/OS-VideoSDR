@@ -1,0 +1,29 @@
+profiles:
+  U10:
+    width: 1920
+    height: 1080
+    fps: 10
+    pixel_format: RGB888
+    codec: raw
+    target_latency_ms_p95: 50
+    notes: required first-pass uncompressed profile
+
+  U15:
+    width: 1920
+    height: 1080
+    fps: 15
+    pixel_format: RGB888
+    codec: raw
+    target_latency_ms_p95: 50
+    notes: target uncompressed profile on 1 GbE
+
+  C60:
+    width: 1920
+    height: 1080
+    fps: 60
+    pixel_format: H264
+    codec: h264_hw
+    target_latency_ms_p95: 50
+    notes: post-hardware-codec target
+
+default_profile: U10

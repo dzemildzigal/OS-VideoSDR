@@ -1,0 +1,20 @@
+udp:
+  bind_ip: 0.0.0.0
+  tx_ip: 192.168.1.100
+  tx_port: 5000
+  rx_port: 5000
+  mtu_bytes: 1500
+  max_payload_bytes: 1200
+  recv_buffer_bytes: 8388608
+  send_buffer_bytes: 8388608
+
+transport:
+  drop_late_frames: true
+  frame_deadline_ms: 40
+  max_reorder_depth: 128
+  reassembly_timeout_ms: 80
+
+pacing:
+  enabled: true
+  max_burst_packets: 4
+  inter_packet_gap_us: 100

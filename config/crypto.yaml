@@ -1,0 +1,14 @@
+crypto:
+  algorithm: AES-256-GCM
+  tag_bytes: 16
+  nonce_counter_bits: 64
+
+keys:
+  tx_to_rx_key_id: 1
+  rx_to_tx_key_id: 2
+
+session:
+  replay_window_packets: 1024
+  rekey_interval_seconds: 600
+  reject_reused_nonce: true
+  reject_stale_nonce: true
