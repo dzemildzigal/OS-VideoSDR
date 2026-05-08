@@ -12,11 +12,14 @@ class UdpRx:
         listen_port: int,
         bind_ip: str = "0.0.0.0",
         recv_buffer_bytes: Optional[int] = None,
+        timeout_s: Optional[float] = None,
     ) -> None:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.bind((bind_ip, listen_port))
         if recv_buffer_bytes is not None:
             self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, recv_buffer_bytes)
+        if timeout_s is not None:
+            self._sock.settimeout(timeout_s)
 
     def recv(self, max_datagram_bytes: int = 2048) -> Tuple[bytes, tuple]:
         return self._sock.recvfrom(max_datagram_bytes)

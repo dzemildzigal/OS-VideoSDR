@@ -2,7 +2,8 @@ param(
     [string]$Profile = "U10",
     [string]$Profiles = "config/profiles.yaml",
     [string]$Network = "config/network.yaml",
-    [string]$Crypto = "config/crypto.yaml"
+    [string]$Crypto = "config/crypto.yaml",
+    [string]$CryptoMode = "none"
 )
 
 $ErrorActionPreference = "Stop"
@@ -12,7 +13,9 @@ Write-Host "Profile: $Profile"
 Write-Host "Profiles config: $Profiles"
 Write-Host "Network config: $Network"
 Write-Host "Crypto config: $Crypto"
+Write-Host "Crypto mode: $CryptoMode"
 
-# TODO: replace with actual entrypoint once pipeline module is implemented.
-$cmd = "python -m pynq.runtime.rx_main --profile $Profile --profiles $Profiles --network $Network --crypto $Crypto"
-Write-Host "Planned command: $cmd"
+python pynq/runtime/rx_main.py --profile $Profile --profiles $Profiles --network $Network --crypto $Crypto --crypto-mode $CryptoMode @Args
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}

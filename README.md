@@ -1,6 +1,6 @@
 # OS-VideoSDR
 
-Open Source Software Defined Radio video streaming for encrypted low-latency digital VTX links.
+Open Source Software Defined Radio video streaming for encrypted low-latency digital VTX / VRX links.
 
 ## 1) Mission
 
