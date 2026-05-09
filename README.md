@@ -42,8 +42,8 @@ For 1080p uncompressed RGB888:
 
 Rate = width x height x 3 bytes x fps
 
-- 1080p10: 62.2 MB/s (about 498 Mb/s)
-- 1080p15: 93.3 MB/s (about 746 Mb/s)
+- 1080p10: 62.2 MB/s (about 475 Mb/s)
+- 1080p15: 93.3 MB/s (about 712 Mb/s)
 
 Locked bring-up profiles:
 
@@ -311,3 +311,23 @@ The project moves forward only when each gate is passed:
 1. Add hardening and telemetry, then push U15.
 1. Integrate hardware H.264 and pursue C60.
 1. Port middle link to AntSDR and then add FHSS.
+
+## 10) PL-First PYNQ Continuation Package
+
+To switch to a PL-first architecture, start here first:
+
+1. docs/pynq_pl_first_architecture.md
+1. docs/next_machine_handoff.md
+
+What these documents contain:
+
+- Board-level feasibility and hardware constraints for PYNQ-Z2 Ethernet routing.
+- Exact PL vs PS responsibility split for a PL-first data plane.
+- Proposed AXI interfaces, descriptor ring contract, and control register map.
+- Migration plan from Python bring-up harnesses to a minimal PS networking shim.
+- Copy, setup, validate, and continue checklist for a new development machine.
+
+Current architecture decision:
+
+- Keep the streaming and crypto datapath in PL.
+- Use PS as a thin networking and control shim on PYNQ-Z2 onboard Ethernet.
