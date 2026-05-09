@@ -347,3 +347,21 @@ Planned production direction:
 
 - Move packetization, crypto data path, and frame handling into PL.
 - Keep PS as a minimal networking and control shim on PYNQ-Z2.
+
+### Session Update (2026-05-10)
+
+- Protocol bring-up on PYNQ PS was validated for synthetic loopback traffic.
+- Runtime bring-up tooling was improved for stable troubleshooting:
+	- [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py): added max runtime and max idle exits, plus average and instant throughput metrics.
+	- [pynq/runtime/tx_main.py](pynq/runtime/tx_main.py): added inter-packet pacing (`--inter-packet-gap-us`) and config pacing integration.
+- Stable AES-GCM software-path run result:
+	- 300 frames, `--fps 15`, `--synthetic-frame-bytes 72000`, `packets_tx=18000`, `packets_rx=18000`, `drops=0`, `decrypt_fail=0`.
+	- This is valid protocol/contract evidence, not full profile evidence.
+- Full-frame 1080p raw smoke test (`6220800` bytes per frame) on PS software path did not pass:
+	- Kernel `packet receive errors` and `receive buffer errors` increased during run.
+	- RX packet count lagged TX packet count by a large margin.
+	- This confirms PS Python runtime is for protocol validation only and is not sufficient for U15 acceptance.
+- Current gate interpretation:
+	- U10 acceptance gate: not passed yet in production architecture.
+	- U15 acceptance gate: not passed.
+	- Next step focus: DMA-backed crypto integration, then PS C shim and PL-first data path.

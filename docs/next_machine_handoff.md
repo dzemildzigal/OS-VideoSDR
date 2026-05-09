@@ -8,6 +8,9 @@ This file is the continuation checklist for moving development to another comput
 - Wired TX and RX Python harness entrypoints exist for protocol bring-up.
 - Unit and integration tests are present and passing.
 - PL-first architecture decision and constraints are documented.
+- PYNQ PS protocol bring-up is now validated at synthetic low-to-medium payload rates.
+- Full-frame 1080p raw smoke tests on PS software path still show kernel RX buffer drops.
+- U10 and U15 acceptance gates are still open pending DMA + PL-first data path progress.
 
 Key docs:
 
@@ -83,6 +86,44 @@ Terminal B:
 4. Implement RX ring ingestion from PS to PL.
 5. Hook hardware counters to AXI-Lite map.
 6. Run U10 gate with PS C shim replacing Python data path.
+
+## Session Evidence (2026-05-10)
+
+- Stable software-path protocol run (AES-GCM):
+	- `--fps 15 --synthetic-frame-bytes 72000`
+	- TX and RX packet/frame parity reached (`18000` packets each, `300` frames complete).
+	- `drops=0`, `decrypt_fail=0`, `reorder=0`.
+- Full-frame 1080p raw smoke run (`6220800` bytes/frame) on PS path:
+	- RX packet count significantly lower than TX packet count.
+	- `netstat -su` counters (`packet receive errors`, `receive buffer errors`) increased during the run.
+	- Result: PS Python path is not sufficient evidence for U15.
+
+## DMA Next Session Checklist
+
+1. Confirm hardware assets and interface contract.
+	- Verify `.bit/.hwh` paths, IP instance names, DMA instance names, and channel directions.
+	- Confirm nonce and AAD field contract is unchanged from protocol docs.
+2. Implement board DMA adapter in `pynq/runtime/aes_gcm_dma.py`.
+	- Implement `load()` to bind overlay + DMA resources.
+	- Implement `encrypt()` and `decrypt()` with timeout/error mapping.
+	- Keep method signatures compatible with current TX/RX cipher call pattern.
+3. Wire DMA mode into `pynq/runtime/tx_main.py` and `pynq/runtime/rx_main.py`.
+	- Add runtime mode selection for DMA-backed crypto.
+	- Keep current software modes for fallback diagnostics.
+4. Run DMA smoke ladder (same key/session policy).
+	- Step A: `72000` bytes/frame at `15` fps.
+	- Step B: `120000` bytes/frame at `15` fps.
+	- Step C: `6220800` bytes/frame short run first, then longer run.
+5. Capture evidence at each step.
+	- TX packets vs RX packets.
+	- RX `drops`, `decrypt_fail`, `reorder`.
+	- `netstat -su` drop counters before/after each run.
+6. Exit criteria before calling U10/U15 gate attempts.
+	- No growth in kernel receive buffer error counters on chosen profile.
+	- Stable run without stalls or nonce/auth regressions.
+	- Throughput envelope moves beyond PS software baseline.
+7. If full-frame drops persist, continue with PS C shim work queue above.
+	- Keep Python runtime as protocol/debug harness only.
 
 ## Definition of Done for Next Step
 
