@@ -125,6 +125,58 @@ Terminal B:
 7. If full-frame drops persist, continue with PS C shim work queue above.
 	- Keep Python runtime as protocol/debug harness only.
 
+## First 30 Minutes Tomorrow (Copy/Paste)
+
+Run these commands on the PYNQ shell to restart quickly with logs and clear pass or fail evidence.
+
+1. Session setup and log folder.
+
+- cd /home/xilinx/jupyter_notebooks/OS-VideoSDR
+- export KEY_HEX=000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F
+- export RUN_TS=$(date +%Y%m%d_%H%M%S)
+- export RUN_DIR=artifacts/logs/$RUN_TS
+- mkdir -p "$RUN_DIR"
+
+2. Environment snapshot.
+
+- uname -a | tee "$RUN_DIR/00_env.txt"
+- python --version | tee -a "$RUN_DIR/00_env.txt"
+- ip -br addr | tee -a "$RUN_DIR/00_env.txt"
+- python -m pytest -q | tee "$RUN_DIR/01_pytest.txt"
+
+3. Overlay and runtime asset check.
+
+- find pynq/overlays -maxdepth 4 -type f \( -name "*.bit" -o -name "*.hwh" \) | tee "$RUN_DIR/02_overlays.txt"
+- python pynq/runtime/tx_main.py --help > "$RUN_DIR/03_tx_help.txt"
+- python pynq/runtime/rx_main.py --help > "$RUN_DIR/04_rx_help.txt"
+
+4. UDP drop counters before test.
+
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/05_udp_before.txt"
+
+5. Quick known-good software-path sanity (stable synthetic load).
+
+- timeout 30s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 120 --max-packets 12000 --max-idle-s 2 --max-runtime-s 30 --crypto-mode aesgcm --key-hex "$KEY_HEX" --recv-buffer-bytes 33554432 > "$RUN_DIR/06_rx_sw_sanity.txt" 2>&1 &
+- sleep 1
+- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames 120 --fps 15 --synthetic-frame-bytes 72000 --inter-packet-gap-us 100 --crypto-mode aesgcm --key-hex "$KEY_HEX" --send-buffer-bytes 33554432 > "$RUN_DIR/07_tx_sw_sanity.txt" 2>&1
+
+6. UDP drop counters after sanity.
+
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/08_udp_after_sw_sanity.txt"
+
+7. DMA smoke placeholders (run after DMA mode is wired into TX and RX).
+
+- timeout 40s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 180 --max-packets 18000 --max-idle-s 2 --max-runtime-s 40 --crypto-mode dma --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/09_rx_dma_smoke.txt" 2>&1 &
+- sleep 1
+- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames 180 --fps 15 --synthetic-frame-bytes 120000 --inter-packet-gap-us 100 --crypto-mode dma --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/10_tx_dma_smoke.txt" 2>&1
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/11_udp_after_dma_smoke.txt"
+
+8. What to check in logs before moving on.
+
+- Packet parity (TX packets == RX packets).
+- RX counters: `drops=0`, `decrypt_fail=0`, `reorder=0`.
+- No growth in UDP kernel receive buffer errors for the selected test profile.
+
 ## Definition of Done for Next Step
 
 The next major milestone is complete when:
