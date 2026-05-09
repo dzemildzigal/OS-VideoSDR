@@ -62,6 +62,7 @@ DEFAULT_NETWORK = {
     "tx_port": 5000,
     "max_payload_bytes": 1200,
     "send_buffer_bytes": 8 * 1024 * 1024,
+    "inter_packet_gap_us": 0,
 }
 
 
@@ -128,6 +129,11 @@ def _load_network(network_path: Path) -> Dict[str, Any]:
         for key in merged:
             if key in udp_cfg:
                 merged[key] = udp_cfg[key]
+
+    pacing_cfg = loaded.get("pacing", {})
+    if isinstance(pacing_cfg, dict) and pacing_cfg.get("enabled", False):
+        if "inter_packet_gap_us" in pacing_cfg:
+            merged["inter_packet_gap_us"] = pacing_cfg["inter_packet_gap_us"]
 
     return merged
 
@@ -204,6 +210,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--key-id", type=int, default=1)
 
     parser.add_argument("--send-buffer-bytes", type=int, default=None)
+    parser.add_argument("--inter-packet-gap-us", type=int, default=None)
     parser.add_argument("--print-interval-s", type=float, default=1.0)
     return parser
 
@@ -241,6 +248,14 @@ def main() -> int:
         else int(network.get("send_buffer_bytes", 8 * 1024 * 1024))
     )
 
+    inter_packet_gap_us = (
+        int(args.inter_packet_gap_us)
+        if args.inter_packet_gap_us is not None
+        else int(network.get("inter_packet_gap_us", 0))
+    )
+    if inter_packet_gap_us < 0:
+        raise ValueError("inter-packet-gap-us must be >= 0")
+
     session_id = args.session_id if args.session_id > 0 else (int(time.time()) & 0xFFFFFFFF)
     payload_type = PAYLOAD_TYPE_MAP[args.payload_type]
     cipher = _build_cipher(args.crypto_mode, args.key_hex)
@@ -271,6 +286,7 @@ def main() -> int:
         f"frame_bytes={frame_bytes}",
         f"segment_bytes={segment_bytes}",
         f"crypto_mode={args.crypto_mode}",
+        f"inter_packet_gap_us={inter_packet_gap_us}",
     )
 
     try:
@@ -304,6 +320,8 @@ def main() -> int:
                 datagram = build_datagram(header, ciphertext, tag)
                 bytes_sent += tx.send(datagram)
                 telemetry.packets_tx += 1
+                if inter_packet_gap_us > 0:
+                    time.sleep(inter_packet_gap_us / 1_000_000.0)
 
             telemetry.frames_completed += 1
             frame_id += 1

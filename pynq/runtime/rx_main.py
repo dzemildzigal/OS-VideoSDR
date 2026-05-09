@@ -7,6 +7,7 @@ frames, and prints runtime telemetry.
 from __future__ import annotations
 
 import argparse
+import heapq
 import importlib
 import math
 from pathlib import Path
@@ -57,6 +58,34 @@ class _AesGcmAead:
 
     def decrypt(self, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes) -> bytes:
         return self._aesgcm.decrypt(nonce, ciphertext + tag, aad)
+
+
+class _ReplayState:
+    def __init__(self) -> None:
+        self.latest_nonce = -1
+        self.seen: Set[int] = set()
+        self.seen_heap: List[int] = []
+
+    def accept(self, nonce_counter: int, replay_window: int) -> bool:
+        latest = self.latest_nonce
+        if latest >= 0 and not validate_replay_window(latest, nonce_counter, replay_window):
+            return False
+
+        if nonce_counter in self.seen:
+            return False
+
+        self.seen.add(nonce_counter)
+        heapq.heappush(self.seen_heap, nonce_counter)
+
+        if nonce_counter > latest:
+            self.latest_nonce = nonce_counter
+
+        cutoff = self.latest_nonce - replay_window
+        while self.seen_heap and self.seen_heap[0] <= cutoff:
+            stale_nonce = heapq.heappop(self.seen_heap)
+            self.seen.discard(stale_nonce)
+
+        return True
 
 
 def _load_yaml_dict(path: Path) -> Dict[str, Any]:
@@ -134,6 +163,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--max-packets", type=int, default=0)
     parser.add_argument("--max-active-frames", type=int, default=16)
+    parser.add_argument("--max-runtime-s", type=float, default=0.0)
+    parser.add_argument("--max-idle-s", type=float, default=0.0)
 
     parser.add_argument("--crypto-mode", choices=["none", "aesgcm"], default="none")
     parser.add_argument("--key-hex", default="")
@@ -162,6 +193,7 @@ def main() -> int:
     reassembler = FrameReassembler(max_active_frames=args.max_active_frames)
     telemetry = TelemetryCounters()
     bytes_received = 0
+    bytes_since_print = 0
 
     rx = UdpRx(
         listen_port=listen_port,
@@ -170,22 +202,27 @@ def main() -> int:
         timeout_s=args.socket_timeout_s,
     )
 
-    nonce_latest_by_key: Dict[int, int] = {}
-    nonce_seen_by_key: Dict[int, Set[int]] = {}
+    replay_state_by_key: Dict[int, _ReplayState] = {}
     latency_ms: List[float] = []
 
     started = time.perf_counter()
     last_print = started
+    last_packet_at = started
 
     print(
         "RX start:",
         f"listen={bind_ip}:{listen_port}",
         f"crypto_mode={args.crypto_mode}",
         f"replay_window={args.replay_window}",
+        f"max_runtime_s={args.max_runtime_s}",
+        f"max_idle_s={args.max_idle_s}",
     )
 
     try:
         while True:
+            now = time.perf_counter()
+            if args.max_runtime_s > 0 and (now - started) >= args.max_runtime_s:
+                break
             if args.max_packets > 0 and telemetry.packets_rx >= args.max_packets:
                 break
             if args.max_frames > 0 and telemetry.frames_completed >= args.max_frames:
@@ -195,9 +232,13 @@ def main() -> int:
                 datagram, _peer = rx.recv(max_datagram_bytes=args.max_datagram_bytes)
             except socket.timeout:
                 now = time.perf_counter()
+                if args.max_idle_s > 0 and (now - last_packet_at) >= args.max_idle_s:
+                    break
                 if now - last_print >= args.print_interval_s:
                     elapsed = max(1e-9, now - started)
-                    mbps = (bytes_received * 8.0) / (elapsed * 1_000_000.0)
+                    interval = max(1e-9, now - last_print)
+                    avg_mbps = (bytes_received * 8.0) / (elapsed * 1_000_000.0)
+                    inst_mbps = (bytes_since_print * 8.0) / (interval * 1_000_000.0)
                     print(
                         "RX stats:",
                         f"frames={telemetry.frames_completed}",
@@ -207,13 +248,17 @@ def main() -> int:
                         f"reorder={telemetry.reorder_events}",
                         f"latency_p95_ms={_p95(latency_ms):.2f}",
                         f"elapsed_s={elapsed:.1f}",
-                        f"throughput_mbps={mbps:.2f}",
+                        f"throughput_avg_mbps={avg_mbps:.2f}",
+                        f"throughput_inst_mbps={inst_mbps:.2f}",
                     )
+                    bytes_since_print = 0
                     last_print = now
                 continue
 
             telemetry.packets_rx += 1
             bytes_received += len(datagram)
+            bytes_since_print += len(datagram)
+            last_packet_at = time.perf_counter()
 
             try:
                 header, ciphertext, tag = split_datagram(datagram)
@@ -227,31 +272,13 @@ def main() -> int:
                 continue
 
             key_id = header.key_id
-            latest_nonce = nonce_latest_by_key.get(key_id, -1)
-            if latest_nonce >= 0 and not validate_replay_window(
-                latest_nonce, header.nonce_counter, args.replay_window
-            ):
-                telemetry.packets_dropped += 1
-                continue
-
-            seen = nonce_seen_by_key.setdefault(key_id, set())
-            if header.nonce_counter in seen:
-                telemetry.packets_dropped += 1
-                continue
-
-            if latest_nonce >= 0 and header.nonce_counter < latest_nonce:
+            replay_state = replay_state_by_key.setdefault(key_id, _ReplayState())
+            if replay_state.latest_nonce >= 0 and header.nonce_counter < replay_state.latest_nonce:
                 telemetry.reorder_events += 1
 
-            seen.add(header.nonce_counter)
-            if header.nonce_counter > latest_nonce:
-                nonce_latest_by_key[key_id] = header.nonce_counter
-
-            latest_nonce = nonce_latest_by_key.get(key_id, header.nonce_counter)
-            cutoff = latest_nonce - args.replay_window
-            if cutoff > 0:
-                stale = {value for value in seen if value <= cutoff}
-                if stale:
-                    seen.difference_update(stale)
+            if not replay_state.accept(header.nonce_counter, args.replay_window):
+                telemetry.packets_dropped += 1
+                continue
 
             aad = pack_header(header)
             nonce = _nonce_bytes(header.session_id, header.nonce_counter)
@@ -275,7 +302,9 @@ def main() -> int:
             now = time.perf_counter()
             if now - last_print >= args.print_interval_s:
                 elapsed = max(1e-9, now - started)
-                throughput_mbps = (bytes_received * 8.0) / (elapsed * 1_000_000.0)
+                interval = max(1e-9, now - last_print)
+                throughput_avg_mbps = (bytes_received * 8.0) / (elapsed * 1_000_000.0)
+                throughput_inst_mbps = (bytes_since_print * 8.0) / (interval * 1_000_000.0)
                 print(
                     "RX stats:",
                     f"frames={telemetry.frames_completed}",
@@ -285,8 +314,10 @@ def main() -> int:
                     f"reorder={telemetry.reorder_events}",
                     f"latency_p95_ms={_p95(latency_ms):.2f}",
                     f"elapsed_s={elapsed:.1f}",
-                    f"throughput_mbps={throughput_mbps:.2f}",
+                    f"throughput_avg_mbps={throughput_avg_mbps:.2f}",
+                    f"throughput_inst_mbps={throughput_inst_mbps:.2f}",
                 )
+                bytes_since_print = 0
                 last_print = now
 
     except KeyboardInterrupt:
