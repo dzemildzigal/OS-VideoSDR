@@ -331,3 +331,19 @@ Current architecture decision:
 
 - Keep the streaming and crypto datapath in PL.
 - Use PS as a thin networking and control shim on PYNQ-Z2 onboard Ethernet.
+
+## 11) Current Status of pynq/runtime Code
+
+Important clarification for the current codebase:
+
+- [pynq/runtime/tx_main.py](pynq/runtime/tx_main.py) and [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py) are PS-side bring-up tools.
+- [pynq/runtime/tx_main.py](pynq/runtime/tx_main.py) currently generates synthetic frames in software and sends packetized UDP traffic.
+- [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py) receives UDP packets in software, validates/reassembles them, and reports telemetry.
+- These scripts can run over localhost or over a real network interface, but the processing path is still PS/software.
+- They are for protocol and integration validation only.
+- They are not the final PL-first high-performance data path.
+
+Planned production direction:
+
+- Move packetization, crypto data path, and frame handling into PL.
+- Keep PS as a minimal networking and control shim on PYNQ-Z2.
