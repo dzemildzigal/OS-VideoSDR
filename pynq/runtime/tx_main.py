@@ -256,7 +256,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
     parser.add_argument("--key-hex", default="")
     parser.add_argument("--key-id", type=int, default=1)
-    parser.add_argument("--dma-bitstream", default="pynq/overlays/tx/aes_gcm_dma_wrapper.bit")
+    parser.add_argument("--dma-bitstream", default="aes_gcm_dma_wrapper.bit")
     parser.add_argument("--dma-ip-name", default="aes_gcm_0")
     parser.add_argument("--dma-name", default="axi_dma_0")
     parser.add_argument("--dma-timeout-s", type=float, default=5.0)

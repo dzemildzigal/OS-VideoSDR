@@ -72,11 +72,29 @@ def _resolve_path(value: str) -> Path:
     if candidate.is_absolute():
         return candidate
 
-    cwd_path = (Path.cwd() / candidate).resolve()
-    if cwd_path.exists():
-        return cwd_path
-
     project_root = Path(__file__).resolve().parents[2]
+    sibling_root = project_root.parent
+
+    search_paths = [
+        (Path.cwd() / candidate).resolve(),
+        (project_root / candidate).resolve(),
+        (project_root / "pynq" / "overlays" / "tx" / candidate.name).resolve(),
+        (project_root / "pynq" / "overlays" / "rx" / candidate.name).resolve(),
+        (sibling_root / "AES256" / candidate).resolve(),
+        (sibling_root / "AES256" / candidate.name).resolve(),
+        (sibling_root / "AES256" / "pynq" / candidate.name).resolve(),
+        (sibling_root / "AES-256-SystemVerilog" / candidate).resolve(),
+        (sibling_root / "AES-256-SystemVerilog" / candidate.name).resolve(),
+        (sibling_root / "AES-256-SystemVerilog" / "pynq" / candidate.name).resolve(),
+    ]
+
+    for path in search_paths:
+        if path.exists():
+            return path
+
+    if candidate.name == "aes_gcm_dma_wrapper.bit":
+        return (sibling_root / "AES256" / candidate.name).resolve()
+
     return (project_root / candidate).resolve()
 
 
