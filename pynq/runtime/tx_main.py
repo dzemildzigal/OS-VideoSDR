@@ -11,6 +11,7 @@ import argparse
 import importlib
 import math
 from pathlib import Path
+import struct
 import sys
 import time
 from typing import Any, Dict, Iterable, Iterator, Optional, Tuple
@@ -215,6 +216,28 @@ def _nonce_bytes(session_id: int, nonce_counter: int) -> bytes:
     )
 
 
+def _frame_aad(
+    session_id: int,
+    stream_id: int,
+    frame_id: int,
+    key_id: int,
+    payload_type: int,
+    payload_length: int,
+    nonce_counter: int,
+) -> bytes:
+    # Stable frame-level AAD for frame-granularity crypto mode.
+    return struct.pack(
+        "!IHIBBQI",
+        session_id,
+        stream_id,
+        frame_id,
+        key_id,
+        payload_type,
+        nonce_counter,
+        payload_length,
+    )
+
+
 def _segment_payload(payload: bytes, chunk_size: int) -> Iterator[bytes]:
     for offset in range(0, len(payload), chunk_size):
         yield payload[offset : offset + chunk_size]
@@ -260,6 +283,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--payload-type", choices=sorted(PAYLOAD_TYPE_MAP.keys()), default="raw_rgb")
 
     parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
+    parser.add_argument(
+        "--crypto-granularity",
+        choices=["packet", "frame"],
+        default="packet",
+        help="packet: encrypt each transport segment; frame: encrypt full frame then segment ciphertext",
+    )
     parser.add_argument("--key-hex", default="")
     parser.add_argument("--key-id", type=int, default=1)
     parser.add_argument("--dma-bitstream", default="aes_gcm_dma_wrapper.bit")
@@ -351,6 +380,7 @@ def main() -> int:
         f"frame_bytes={frame_bytes}",
         f"segment_bytes={segment_bytes}",
         f"crypto_mode={args.crypto_mode}",
+        f"crypto_granularity={args.crypto_granularity}",
         f"inter_packet_gap_us={inter_packet_gap_us}",
     )
 
@@ -358,35 +388,73 @@ def main() -> int:
         while args.frames <= 0 or frame_id < args.frames:
             frame = _synthetic_frame(frame_id, frame_bytes)
             frame_timestamp_ns = time.time_ns()
-            segments = list(_segment_payload(frame, segment_bytes))
-            segment_count = len(segments)
+            if args.crypto_granularity == "packet":
+                segments = list(_segment_payload(frame, segment_bytes))
+                segment_count = len(segments)
 
-            for segment_id, segment_payload in enumerate(segments):
+                for segment_id, segment_payload in enumerate(segments):
+                    nonce_counter += 1
+                    header = PacketHeader(
+                        session_id=session_id,
+                        stream_id=args.stream_id,
+                        frame_id=frame_id,
+                        segment_id=segment_id,
+                        segment_count=segment_count,
+                        source_timestamp_ns=frame_timestamp_ns,
+                        payload_type=payload_type,
+                        key_id=args.key_id,
+                        payload_length=len(segment_payload),
+                        nonce_counter=nonce_counter,
+                        tag_length=DEFAULT_TAG_LENGTH,
+                    )
+
+                    aad = pack_header(header)
+                    nonce = _nonce_bytes(session_id, nonce_counter)
+                    ciphertext, tag = cipher.encrypt(nonce, aad, segment_payload)
+
+                    header.payload_length = len(ciphertext)
+                    datagram = build_datagram(header, ciphertext, tag)
+                    bytes_sent += tx.send(datagram)
+                    telemetry.packets_tx += 1
+                    if inter_packet_gap_us > 0:
+                        time.sleep(inter_packet_gap_us / 1_000_000.0)
+            else:
                 nonce_counter += 1
-                header = PacketHeader(
+                nonce = _nonce_bytes(session_id, nonce_counter)
+                frame_level_aad = _frame_aad(
                     session_id=session_id,
                     stream_id=args.stream_id,
                     frame_id=frame_id,
-                    segment_id=segment_id,
-                    segment_count=segment_count,
-                    source_timestamp_ns=frame_timestamp_ns,
-                    payload_type=payload_type,
                     key_id=args.key_id,
-                    payload_length=len(segment_payload),
+                    payload_type=payload_type,
+                    payload_length=len(frame),
                     nonce_counter=nonce_counter,
-                    tag_length=DEFAULT_TAG_LENGTH,
                 )
+                frame_ciphertext, tag = cipher.encrypt(nonce, frame_level_aad, frame)
 
-                aad = pack_header(header)
-                nonce = _nonce_bytes(session_id, nonce_counter)
-                ciphertext, tag = cipher.encrypt(nonce, aad, segment_payload)
+                segments = list(_segment_payload(frame_ciphertext, segment_bytes))
+                segment_count = len(segments)
 
-                header.payload_length = len(ciphertext)
-                datagram = build_datagram(header, ciphertext, tag)
-                bytes_sent += tx.send(datagram)
-                telemetry.packets_tx += 1
-                if inter_packet_gap_us > 0:
-                    time.sleep(inter_packet_gap_us / 1_000_000.0)
+                for segment_id, segment_payload in enumerate(segments):
+                    header = PacketHeader(
+                        session_id=session_id,
+                        stream_id=args.stream_id,
+                        frame_id=frame_id,
+                        segment_id=segment_id,
+                        segment_count=segment_count,
+                        source_timestamp_ns=frame_timestamp_ns,
+                        payload_type=payload_type,
+                        key_id=args.key_id,
+                        payload_length=len(segment_payload),
+                        nonce_counter=nonce_counter,
+                        tag_length=DEFAULT_TAG_LENGTH,
+                    )
+
+                    datagram = build_datagram(header, segment_payload, tag)
+                    bytes_sent += tx.send(datagram)
+                    telemetry.packets_tx += 1
+                    if inter_packet_gap_us > 0:
+                        time.sleep(inter_packet_gap_us / 1_000_000.0)
 
             telemetry.frames_completed += 1
             frame_id += 1

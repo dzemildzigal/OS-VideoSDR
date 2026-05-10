@@ -12,9 +12,10 @@ import importlib
 import math
 from pathlib import Path
 import socket
+import struct
 import sys
 import time
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -200,6 +201,28 @@ def _nonce_bytes(session_id: int, nonce_counter: int) -> bytes:
     )
 
 
+def _frame_aad(
+    session_id: int,
+    stream_id: int,
+    frame_id: int,
+    key_id: int,
+    payload_type: int,
+    payload_length: int,
+    nonce_counter: int,
+) -> bytes:
+    # Stable frame-level AAD for frame-granularity crypto mode.
+    return struct.pack(
+        "!IHIBBQI",
+        session_id,
+        stream_id,
+        frame_id,
+        key_id,
+        payload_type,
+        nonce_counter,
+        payload_length,
+    )
+
+
 def _p95(values: List[float]) -> float:
     if not values:
         return 0.0
@@ -228,6 +251,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-idle-s", type=float, default=0.0)
 
     parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
+    parser.add_argument(
+        "--crypto-granularity",
+        choices=["packet", "frame"],
+        default="packet",
+        help="packet: decrypt each transport segment; frame: reassemble ciphertext then decrypt once",
+    )
     parser.add_argument("--key-hex", default="")
     parser.add_argument("--dma-bitstream", default="aes_gcm_dma_wrapper.bit")
     parser.add_argument("--dma-ip-name", default="aes_gcm_0")
@@ -281,6 +310,7 @@ def main() -> int:
     )
 
     replay_state_by_key: Dict[int, _ReplayState] = {}
+    frame_meta_by_key: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
     latency_ms: List[float] = []
 
     started = time.perf_counter()
@@ -291,6 +321,7 @@ def main() -> int:
         "RX start:",
         f"listen={bind_ip}:{listen_port}",
         f"crypto_mode={args.crypto_mode}",
+        f"crypto_granularity={args.crypto_granularity}",
         f"replay_window={args.replay_window}",
         f"max_runtime_s={args.max_runtime_s}",
         f"max_idle_s={args.max_idle_s}",
@@ -350,29 +381,104 @@ def main() -> int:
                 continue
 
             key_id = header.key_id
-            replay_state = replay_state_by_key.setdefault(key_id, _ReplayState())
-            if replay_state.latest_nonce >= 0 and header.nonce_counter < replay_state.latest_nonce:
-                telemetry.reorder_events += 1
+            if args.crypto_granularity == "packet":
+                replay_state = replay_state_by_key.setdefault(key_id, _ReplayState())
+                if replay_state.latest_nonce >= 0 and header.nonce_counter < replay_state.latest_nonce:
+                    telemetry.reorder_events += 1
 
-            if not replay_state.accept(header.nonce_counter, args.replay_window):
-                telemetry.packets_dropped += 1
-                continue
+                if not replay_state.accept(header.nonce_counter, args.replay_window):
+                    telemetry.packets_dropped += 1
+                    continue
 
-            aad = pack_header(header)
-            nonce = _nonce_bytes(header.session_id, header.nonce_counter)
+                aad = pack_header(header)
+                nonce = _nonce_bytes(header.session_id, header.nonce_counter)
 
-            try:
-                plaintext = cipher.decrypt(nonce, aad, ciphertext, tag)
-            except Exception:
-                telemetry.decrypt_failures += 1
-                telemetry.packets_dropped += 1
-                continue
+                try:
+                    plaintext = cipher.decrypt(nonce, aad, ciphertext, tag)
+                except Exception:
+                    telemetry.decrypt_failures += 1
+                    telemetry.packets_dropped += 1
+                    continue
 
-            maybe_frame = reassembler.push(header, plaintext)
-            if maybe_frame is not None:
+                maybe_frame = reassembler.push(header, plaintext)
+                if maybe_frame is not None:
+                    telemetry.frames_completed += 1
+                    if header.source_timestamp_ns > 0:
+                        end_to_end_ms = (time.time_ns() - header.source_timestamp_ns) / 1_000_000.0
+                        latency_ms.append(end_to_end_ms)
+                        if len(latency_ms) > 4096:
+                            latency_ms = latency_ms[-2048:]
+            else:
+                frame_key = (header.session_id, header.stream_id, header.frame_id)
+                meta = frame_meta_by_key.get(frame_key)
+
+                if meta is None:
+                    frame_meta_by_key[frame_key] = {
+                        "nonce_counter": header.nonce_counter,
+                        "key_id": header.key_id,
+                        "payload_type": header.payload_type,
+                        "tag": tag,
+                        "source_timestamp_ns": header.source_timestamp_ns,
+                        "session_id": header.session_id,
+                        "stream_id": header.stream_id,
+                        "frame_id": header.frame_id,
+                    }
+                else:
+                    if (
+                        header.nonce_counter != int(meta["nonce_counter"])
+                        or header.key_id != int(meta["key_id"])
+                        or header.payload_type != int(meta["payload_type"])
+                        or tag != meta["tag"]
+                    ):
+                        telemetry.packets_dropped += 1
+                        continue
+
+                    if header.source_timestamp_ns > 0:
+                        current_ts = int(meta.get("source_timestamp_ns", 0))
+                        if current_ts == 0 or header.source_timestamp_ns < current_ts:
+                            meta["source_timestamp_ns"] = header.source_timestamp_ns
+
+                maybe_ciphertext_frame = reassembler.push(header, ciphertext)
+                if maybe_ciphertext_frame is None:
+                    continue
+
+                meta = frame_meta_by_key.pop(frame_key, None)
+                if meta is None:
+                    telemetry.packets_dropped += 1
+                    continue
+
+                frame_nonce_counter = int(meta["nonce_counter"])
+                frame_key_id = int(meta["key_id"])
+                replay_state = replay_state_by_key.setdefault(frame_key_id, _ReplayState())
+                if replay_state.latest_nonce >= 0 and frame_nonce_counter < replay_state.latest_nonce:
+                    telemetry.reorder_events += 1
+
+                if not replay_state.accept(frame_nonce_counter, args.replay_window):
+                    telemetry.packets_dropped += 1
+                    continue
+
+                nonce = _nonce_bytes(int(meta["session_id"]), frame_nonce_counter)
+                aad = _frame_aad(
+                    session_id=int(meta["session_id"]),
+                    stream_id=int(meta["stream_id"]),
+                    frame_id=int(meta["frame_id"]),
+                    key_id=frame_key_id,
+                    payload_type=int(meta["payload_type"]),
+                    payload_length=len(maybe_ciphertext_frame),
+                    nonce_counter=frame_nonce_counter,
+                )
+
+                try:
+                    _plaintext = cipher.decrypt(nonce, aad, maybe_ciphertext_frame, meta["tag"])
+                except Exception:
+                    telemetry.decrypt_failures += 1
+                    telemetry.packets_dropped += 1
+                    continue
+
                 telemetry.frames_completed += 1
-                if header.source_timestamp_ns > 0:
-                    end_to_end_ms = (time.time_ns() - header.source_timestamp_ns) / 1_000_000.0
+                source_ts = int(meta.get("source_timestamp_ns", 0))
+                if source_ts > 0:
+                    end_to_end_ms = (time.time_ns() - source_ts) / 1_000_000.0
                     latency_ms.append(end_to_end_ms)
                     if len(latency_ms) > 4096:
                         latency_ms = latency_ms[-2048:]
