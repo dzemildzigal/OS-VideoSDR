@@ -365,3 +365,20 @@ Planned production direction:
 	- U10 acceptance gate: not passed yet in production architecture.
 	- U15 acceptance gate: not passed.
 	- Next step focus: DMA-backed crypto integration, then PS C shim and PL-first data path.
+
+### Session Update (2026-05-10, implementation delta)
+
+- DMA runtime mode is now wired into:
+	- [pynq/runtime/tx_main.py](pynq/runtime/tx_main.py) with `--crypto-mode dma` and DMA overlay selection flags.
+	- [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py) with `--crypto-mode dma` and explicit decrypt-capable-overlay guard.
+- [pynq/runtime/aes_gcm_dma.py](pynq/runtime/aes_gcm_dma.py) now includes board adapter logic for:
+	- overlay loading,
+	- DMA buffer transfer,
+	- AES register/session programming,
+	- encrypt-path ciphertext and tag extraction.
+- Important limitation remains explicit:
+	- The currently validated AES overlay path is encrypt-only.
+	- RX `--crypto-mode dma` requires a decrypt-capable overlay and will fail fast without `--dma-decrypt-supported`.
+- Practical next execution order remains:
+	- TX DMA synthetic payload -> PC software decrypt/verify first,
+	- then HDMI-in integration after DMA synthetic gate passes.

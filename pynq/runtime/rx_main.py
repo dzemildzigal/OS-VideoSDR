@@ -60,6 +60,33 @@ class _AesGcmAead:
         return self._aesgcm.decrypt(nonce, ciphertext + tag, aad)
 
 
+class _DmaAead:
+    def __init__(
+        self,
+        key_hex: str,
+        bitstream_path: str,
+        ip_name: str,
+        dma_name: str,
+        timeout_s: float,
+        decrypt_supported: bool,
+    ) -> None:
+        from aes_gcm_dma import AesGcmDmaEngine, DmaCryptoConfig
+
+        config = DmaCryptoConfig(
+            bitstream_path=bitstream_path,
+            key_hex=key_hex,
+            ip_name=ip_name,
+            dma_name=dma_name,
+            timeout_s=timeout_s,
+            decrypt_supported=decrypt_supported,
+        )
+        self._engine = AesGcmDmaEngine(config)
+        self._engine.load()
+
+    def decrypt(self, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes) -> bytes:
+        return self._engine.decrypt(nonce, aad, ciphertext, tag)
+
+
 class _ReplayState:
     def __init__(self) -> None:
         self.latest_nonce = -1
@@ -116,21 +143,52 @@ def _load_network(network_path: Path) -> Dict[str, Any]:
     return merged
 
 
-def _build_cipher(mode: str, key_hex: str):
+def _build_cipher(
+    mode: str,
+    key_hex: str,
+    dma_bitstream: str,
+    dma_ip_name: str,
+    dma_name: str,
+    dma_timeout_s: float,
+    dma_decrypt_supported: bool,
+):
     if mode == "none":
         return _NullAead()
 
-    if mode != "aesgcm":
+    if mode not in {"aesgcm", "dma"}:
         raise ValueError(f"Unsupported crypto mode: {mode}")
 
     if not key_hex:
-        raise ValueError("--key-hex is required when --crypto-mode aesgcm")
+        raise ValueError(f"--key-hex is required when --crypto-mode {mode}")
 
-    key = bytes.fromhex(key_hex)
+    try:
+        key = bytes.fromhex(key_hex)
+    except ValueError as exc:
+        raise ValueError("--key-hex must contain valid hex bytes") from exc
+
     if len(key) != 32:
         raise ValueError(f"AES-256 key must be 32 bytes, got {len(key)}")
 
-    return _AesGcmAead(key)
+    if mode == "aesgcm":
+        return _AesGcmAead(key)
+
+    if dma_timeout_s <= 0:
+        raise ValueError("--dma-timeout-s must be > 0")
+
+    if not dma_decrypt_supported:
+        raise ValueError(
+            "--crypto-mode dma on RX requires a decrypt-capable overlay; "
+            "rerun with --dma-decrypt-supported only when that bitstream is loaded"
+        )
+
+    return _DmaAead(
+        key_hex=key.hex(),
+        bitstream_path=dma_bitstream,
+        ip_name=dma_ip_name,
+        dma_name=dma_name,
+        timeout_s=dma_timeout_s,
+        decrypt_supported=dma_decrypt_supported,
+    )
 
 
 def _nonce_bytes(session_id: int, nonce_counter: int) -> bytes:
@@ -166,8 +224,17 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-runtime-s", type=float, default=0.0)
     parser.add_argument("--max-idle-s", type=float, default=0.0)
 
-    parser.add_argument("--crypto-mode", choices=["none", "aesgcm"], default="none")
+    parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
     parser.add_argument("--key-hex", default="")
+    parser.add_argument("--dma-bitstream", default="pynq/overlays/rx/aes_gcm_dma_wrapper.bit")
+    parser.add_argument("--dma-ip-name", default="aes_gcm_0")
+    parser.add_argument("--dma-name", default="axi_dma_0")
+    parser.add_argument("--dma-timeout-s", type=float, default=5.0)
+    parser.add_argument(
+        "--dma-decrypt-supported",
+        action="store_true",
+        help="Enable only when running a decrypt-capable DMA overlay",
+    )
     parser.add_argument("--replay-window", type=int, default=1024)
     parser.add_argument("--print-interval-s", type=float, default=1.0)
     return parser
@@ -189,7 +256,15 @@ def main() -> int:
     if args.replay_window <= 0:
         raise ValueError("replay-window must be > 0")
 
-    cipher = _build_cipher(args.crypto_mode, args.key_hex)
+    cipher = _build_cipher(
+        mode=args.crypto_mode,
+        key_hex=args.key_hex,
+        dma_bitstream=args.dma_bitstream,
+        dma_ip_name=args.dma_ip_name,
+        dma_name=args.dma_name,
+        dma_timeout_s=args.dma_timeout_s,
+        dma_decrypt_supported=args.dma_decrypt_supported,
+    )
     reassembler = FrameReassembler(max_active_frames=args.max_active_frames)
     telemetry = TelemetryCounters()
     bytes_received = 0

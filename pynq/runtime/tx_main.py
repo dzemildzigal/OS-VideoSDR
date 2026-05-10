@@ -88,6 +88,31 @@ class _AesGcmAead:
         return blob[:-DEFAULT_TAG_LENGTH], blob[-DEFAULT_TAG_LENGTH:]
 
 
+class _DmaAead:
+    def __init__(
+        self,
+        key_hex: str,
+        bitstream_path: str,
+        ip_name: str,
+        dma_name: str,
+        timeout_s: float,
+    ) -> None:
+        from aes_gcm_dma import AesGcmDmaEngine, DmaCryptoConfig
+
+        config = DmaCryptoConfig(
+            bitstream_path=bitstream_path,
+            key_hex=key_hex,
+            ip_name=ip_name,
+            dma_name=dma_name,
+            timeout_s=timeout_s,
+        )
+        self._engine = AesGcmDmaEngine(config)
+        self._engine.load()
+
+    def encrypt(self, nonce: bytes, aad: bytes, plaintext: bytes) -> Tuple[bytes, bytes]:
+        return self._engine.encrypt(nonce, aad, plaintext)
+
+
 def _load_yaml_dict(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -138,21 +163,44 @@ def _load_network(network_path: Path) -> Dict[str, Any]:
     return merged
 
 
-def _build_cipher(mode: str, key_hex: str):
+def _build_cipher(
+    mode: str,
+    key_hex: str,
+    dma_bitstream: str,
+    dma_ip_name: str,
+    dma_name: str,
+    dma_timeout_s: float,
+):
     if mode == "none":
         return _NullAead()
 
-    if mode != "aesgcm":
+    if mode not in {"aesgcm", "dma"}:
         raise ValueError(f"Unsupported crypto mode: {mode}")
 
     if not key_hex:
-        raise ValueError("--key-hex is required when --crypto-mode aesgcm")
+        raise ValueError(f"--key-hex is required when --crypto-mode {mode}")
 
-    key = bytes.fromhex(key_hex)
+    try:
+        key = bytes.fromhex(key_hex)
+    except ValueError as exc:
+        raise ValueError("--key-hex must contain valid hex bytes") from exc
+
     if len(key) != 32:
         raise ValueError(f"AES-256 key must be 32 bytes, got {len(key)}")
 
-    return _AesGcmAead(key)
+    if mode == "aesgcm":
+        return _AesGcmAead(key)
+
+    if dma_timeout_s <= 0:
+        raise ValueError("--dma-timeout-s must be > 0")
+
+    return _DmaAead(
+        key_hex=key.hex(),
+        bitstream_path=dma_bitstream,
+        ip_name=dma_ip_name,
+        dma_name=dma_name,
+        timeout_s=dma_timeout_s,
+    )
 
 
 def _nonce_bytes(session_id: int, nonce_counter: int) -> bytes:
@@ -205,9 +253,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stream-id", type=int, default=1)
     parser.add_argument("--payload-type", choices=sorted(PAYLOAD_TYPE_MAP.keys()), default="raw_rgb")
 
-    parser.add_argument("--crypto-mode", choices=["none", "aesgcm"], default="none")
+    parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
     parser.add_argument("--key-hex", default="")
     parser.add_argument("--key-id", type=int, default=1)
+    parser.add_argument("--dma-bitstream", default="pynq/overlays/tx/aes_gcm_dma_wrapper.bit")
+    parser.add_argument("--dma-ip-name", default="aes_gcm_0")
+    parser.add_argument("--dma-name", default="axi_dma_0")
+    parser.add_argument("--dma-timeout-s", type=float, default=5.0)
 
     parser.add_argument("--send-buffer-bytes", type=int, default=None)
     parser.add_argument("--inter-packet-gap-us", type=int, default=None)
@@ -258,7 +310,14 @@ def main() -> int:
 
     session_id = args.session_id if args.session_id > 0 else (int(time.time()) & 0xFFFFFFFF)
     payload_type = PAYLOAD_TYPE_MAP[args.payload_type]
-    cipher = _build_cipher(args.crypto_mode, args.key_hex)
+    cipher = _build_cipher(
+        mode=args.crypto_mode,
+        key_hex=args.key_hex,
+        dma_bitstream=args.dma_bitstream,
+        dma_ip_name=args.dma_ip_name,
+        dma_name=args.dma_name,
+        dma_timeout_s=args.dma_timeout_s,
+    )
 
     tx = UdpTx(
         target_ip=target_ip,

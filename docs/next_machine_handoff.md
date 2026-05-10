@@ -100,6 +100,14 @@ Terminal B:
 
 ## DMA Next Session Checklist
 
+Current implementation status:
+
+- `pynq/runtime/aes_gcm_dma.py` now contains overlay load and encrypt-path DMA plumbing.
+- `pynq/runtime/tx_main.py` and `pynq/runtime/rx_main.py` now accept `--crypto-mode dma`.
+- RX DMA mode currently enforces decrypt-capable-overlay guard via `--dma-decrypt-supported`.
+- For this project stage, run TX DMA on PYNQ and decrypt on PC software path first.
+- DMA runtime validation is hardware-only and must be executed on a PYNQ target, not a host PC.
+
 1. Confirm hardware assets and interface contract.
 	- Verify `.bit/.hwh` paths, IP instance names, DMA instance names, and channel directions.
 	- Confirm nonce and AAD field contract is unchanged from protocol docs.
@@ -110,6 +118,7 @@ Terminal B:
 3. Wire DMA mode into `pynq/runtime/tx_main.py` and `pynq/runtime/rx_main.py`.
 	- Add runtime mode selection for DMA-backed crypto.
 	- Keep current software modes for fallback diagnostics.
+	- Use RX DMA mode only with a decrypt-capable bitstream; otherwise use software decrypt on RX for verification.
 4. Run DMA smoke ladder (same key/session policy).
 	- Step A: `72000` bytes/frame at `15` fps.
 	- Step B: `120000` bytes/frame at `15` fps.
@@ -164,12 +173,12 @@ Run these commands on the PYNQ shell to restart quickly with logs and clear pass
 
 - netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/08_udp_after_sw_sanity.txt"
 
-7. DMA smoke placeholders (run after DMA mode is wired into TX and RX).
+7. DMA TX smoke with software RX verify (current encrypt-only overlay).
 
-- timeout 40s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 180 --max-packets 18000 --max-idle-s 2 --max-runtime-s 40 --crypto-mode dma --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/09_rx_dma_smoke.txt" 2>&1 &
+- timeout 40s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 180 --max-packets 18000 --max-idle-s 2 --max-runtime-s 40 --crypto-mode aesgcm --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/09_rx_sw_verify_for_dma_tx.txt" 2>&1 &
 - sleep 1
 - python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames 180 --fps 15 --synthetic-frame-bytes 120000 --inter-packet-gap-us 100 --crypto-mode dma --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/10_tx_dma_smoke.txt" 2>&1
-- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/11_udp_after_dma_smoke.txt"
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/11_udp_after_dma_tx_smoke.txt"
 
 8. What to check in logs before moving on.
 
