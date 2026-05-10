@@ -16,6 +16,8 @@ Build an end-to-end encrypted live video link in three stages:
 - Python runtime scripts are functional for validation and benchmarking:
   - [pynq/runtime/tx_main.py](pynq/runtime/tx_main.py)
   - [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py)
+- PS C shim scaffold is available for lower-overhead transport bring-up:
+  - [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
 - DMA AES adapter is integrated in:
   - [pynq/runtime/aes_gcm_dma.py](pynq/runtime/aes_gcm_dma.py)
 - Supported crypto modes:
@@ -25,11 +27,13 @@ Build an end-to-end encrypted live video link in three stages:
 - Supported crypto granularities:
   - packet
   - frame
+  - chunk
 
 Important architecture note:
 
 - Current Python scripts are bring-up tooling, not the final high-performance production datapath.
 - Production direction remains PL-first datapath with PS as thin networking and control shim.
+- Full-HD FPS gate runs failed on Python PS runtime (`RX frames=0` with large UDP drop deltas), so active implementation focus has moved to PS C shim + PL ring integration.
 
 ## Simple Terms
 
@@ -41,7 +45,7 @@ Granularity mapping:
 
 - Packet granularity: one AES call per packet.
 - Frame granularity: one AES call per frame.
-- Chunk granularity (next step): one AES call per medium-size block between packet and frame.
+- Chunk granularity: one AES call per medium-size block between packet and frame.
 
 ## What Works Now
 
@@ -157,22 +161,39 @@ Start at the section:
 
 - Corrected Packet vs Frame Benchmark (Copy/Paste)
 
+## PS C Shim Quick Start
+
+Build on PYNQ Linux:
+
+- `chmod +x pynq/ps_shim/build.sh`
+- `./pynq/ps_shim/build.sh`
+
+Loopback smoke test:
+
+- RX: `./pynq/ps_shim/build/ps_shim --mode rx --bind-ip 127.0.0.1 --port 5000 --max-runtime-s 20 --frame-bytes 120000 --segment-bytes 1200`
+- TX: `./pynq/ps_shim/build/ps_shim --mode tx --target-ip 127.0.0.1 --port 5000 --frames 120 --fps 15 --frame-bytes 120000 --segment-bytes 1200 --inter-packet-gap-us 100`
+
+More details:
+
+- [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
+
 ## Repository Guide
 
 - [docs](docs): architecture decisions, protocol policy, handoff notes
 - [config](config): runtime settings
 - [protocol](protocol): shared packet schema and validation
 - [pynq/runtime](pynq/runtime): board-side bring-up runtime and DMA adapter
+- [pynq/ps_shim](pynq/ps_shim): PS-side C transport shim scaffold for PL-first migration
 - [pc](pc): host-side runtime tooling
 - [tests](tests): unit and integration validation
 
 ## Next Engineering Steps
 
-1. Run the full-HD capacity gate script (`scripts/run_fullhd_fps_sweep.sh`) and lock the sustainable raw-FPS ceiling with pass/fail evidence.
-2. Tune pacing and scheduling for high-payload runs (`>=480000` bytes/frame), then re-run breakpoint tests to recover stability at larger frame sizes.
-3. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
-4. Add automated benchmark regression scripts so granularity performance remains trackable across changes.
-5. Continue PS C shim and PL-first datapath migration for production throughput targets.
+1. Use the PS C shim as the primary transport baseline and re-run controlled FPS sweeps to quantify improvement over Python runtime.
+2. Replace `ring_stub.c` with a real descriptor-ring backend and move TX/RX buffers to ring-owned memory.
+3. Integrate PS ring ownership transitions with PL producer/consumer logic and expose hardware counters.
+4. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
+5. Re-run U10/U15 acceptance gates on the C-shim + PL-first path.
 
 ## Source of Truth for Handover
 

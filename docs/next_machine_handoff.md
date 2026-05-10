@@ -10,6 +10,7 @@ This file is the continuation checklist for moving development to another comput
 - PL-first architecture decision and constraints are documented.
 - PYNQ PS protocol bring-up is now validated at synthetic low-to-medium payload rates.
 - Full-frame 1080p raw smoke tests on PS software path still show kernel RX buffer drops.
+- PS C shim scaffold now exists with runnable UDP TX/RX baseline in `pynq/ps_shim`.
 - U10 and U15 acceptance gates are still open pending DMA + PL-first data path progress.
 
 Key docs:
@@ -19,6 +20,7 @@ Key docs:
 - docs/crypto_policy.md
 - docs/latency_budget.md
 - docs/test_plan.md
+- pynq/ps_shim/README.md
 
 ## What To Copy
 
@@ -68,7 +70,12 @@ Install commands:
 - python pynq/runtime/tx_main.py --help
 - python pynq/runtime/rx_main.py --help
 
-3. Optional local loopback dry run.
+3. Build PS C shim baseline.
+
+- chmod +x pynq/ps_shim/build.sh
+- ./pynq/ps_shim/build.sh
+
+4. Optional local loopback dry run.
 
 Terminal A:
 
@@ -80,13 +87,34 @@ Terminal B:
 
 ## Immediate Work Queue
 
-1. Re-run packet-vs-frame DMA benchmark with corrected RX timing to capture valid end-to-end RX counters.
-1. Implement PS C shim for minimal GEM descriptor loop.
-2. Implement PL descriptor producer for TX path.
+1. Build and validate `pynq/ps_shim/build/ps_shim` loopback baseline on PYNQ.
+2. Replace `pynq/ps_shim/src/ring_stub.c` with real ring backend (`/dev` or UIO path).
 3. Integrate TX ring ownership protocol between PL and PS.
 4. Implement RX ring ingestion from PS to PL.
 5. Hook hardware counters to AXI-Lite map.
-6. Run U10 gate with PS C shim replacing Python data path.
+6. Run U10/U15 gate attempts on C-shim + PL-first path.
+
+## PS C Shim Quick Start (Copy/Paste)
+
+From PYNQ shell:
+
+- cd /home/xilinx/jupyter_notebooks/OS-VideoSDR
+- chmod +x pynq/ps_shim/build.sh
+- ./pynq/ps_shim/build.sh
+
+Terminal A (RX):
+
+- ./pynq/ps_shim/build/ps_shim --mode rx --bind-ip 127.0.0.1 --port 5000 --max-runtime-s 20 --frame-bytes 120000 --segment-bytes 1200
+
+Terminal B (TX):
+
+- ./pynq/ps_shim/build/ps_shim --mode tx --target-ip 127.0.0.1 --port 5000 --frames 120 --fps 15 --frame-bytes 120000 --segment-bytes 1200 --inter-packet-gap-us 100
+
+Expected outcome:
+
+- RX prints non-zero packet counters and throughput.
+- TX completes requested frame count with throughput summary.
+- This baseline does not use ring descriptors yet; it verifies C transport loop viability before ring integration.
 
 ## Terminology Cheat Sheet (Plain Language)
 
@@ -113,6 +141,12 @@ Why this matters:
 	- RX packet count significantly lower than TX packet count.
 	- `netstat -su` counters (`packet receive errors`, `receive buffer errors`) increased during the run.
 	- Result: PS Python path is not sufficient evidence for U15.
+
+## Decision Update (2026-05-10, Full-HD Gate)
+
+- Full-HD FPS sweep runs returned `FAIL_RX_FRAMES` with large kernel UDP receive-buffer error deltas for all tested FPS values.
+- Decision: pivot active throughput-path implementation from Python runtime to PS C shim + PL descriptor-ring integration.
+- Python runtime remains the protocol and diagnostics harness.
 
 ## Session Evidence (2026-05-10, DMA Granularity Benchmark)
 
