@@ -151,6 +151,31 @@ Current decision for this profile:
 - Default runtime granularity: `frame` (best observed latency at max observed throughput).
 - If chunk boundaries are required, prefer larger chunk sizes (`48000` to `96000`) for near-frame throughput.
 
+## Session Evidence (2026-05-10, Breakpoint Sweep)
+
+Test shape:
+
+- `frames=90`, `fps=15`, `segment_bytes=1200`, `inter-packet-gap-us=100`.
+- Compared `frame` versus `chunk` (`crypto-chunk-bytes=96000`) at larger frame payloads.
+
+Observed results:
+
+- `frame_bytes=240000`:
+	- frame mode: `TX throughput=23.70`, `RX done=90/90`, `latency_p95_ms=108.54`, UDP counter delta `0`.
+	- chunk 96000: `TX throughput=22.03`, `RX done=90/90`, `latency_p95_ms=125.64`, UDP counter delta `0`.
+- `frame_bytes=480000`:
+	- frame mode: `TX throughput=24.89`, `RX done=73/90`, UDP receive buffer error delta `+174`.
+	- chunk 96000: `TX throughput=21.63`, `RX done=90/90`, UDP counter delta `0`.
+- `frame_bytes=960000`:
+	- frame mode: `TX throughput=24.45`, `RX done=45/90`, UDP receive buffer error delta `+6126`.
+	- chunk 96000: `TX throughput=21.59`, `RX done=45/90`, UDP receive buffer error delta `+5640`.
+
+Decision from breakpoint sweep:
+
+- Up to `240000` bytes/frame, keep `frame` mode.
+- At `480000` bytes/frame, prefer `chunk` with `crypto-chunk-bytes=96000` for robustness.
+- At `960000` bytes/frame, neither mode is stable under current pacing and software RX verify path.
+
 ## DMA Next Session Checklist
 
 Current implementation status:
@@ -238,6 +263,40 @@ Run these commands on the PYNQ shell to restart quickly with logs and clear pass
 - Packet parity (TX packets == RX packets).
 - RX counters: `drops=0`, `decrypt_fail=0`, `reorder=0`.
 - No growth in UDP kernel receive buffer errors for the selected test profile.
+
+## Full-HD Capacity Gate (Why This Is Not Just Testing)
+
+Purpose:
+
+- Determine the sustainable full-HD raw frame-rate envelope for the current runtime stack.
+- Convert measurements into a concrete go/no-go decision for PL-first integration work.
+
+Automation script:
+
+- `scripts/run_fullhd_fps_sweep.sh`
+
+How to run on PYNQ:
+
+- `cd /home/xilinx/jupyter_notebooks/OS-VideoSDR`
+- `chmod +x scripts/run_fullhd_fps_sweep.sh`
+- `./scripts/run_fullhd_fps_sweep.sh`
+
+Optional overrides:
+
+- `FPS_LIST="1 2 3 5 8" FRAME_BYTES=6220800 INTER_PACKET_GAP_US=0 ./scripts/run_fullhd_fps_sweep.sh`
+- `CRYPTO_GRANULARITY=chunk CRYPTO_CHUNK_BYTES=96000 ./scripts/run_fullhd_fps_sweep.sh`
+
+What comes out of this gate:
+
+- A per-FPS pass/fail decision with reasons (`FAIL_RX_FRAMES`, `FAIL_UDP_DROPS`, etc.).
+- A clear ceiling for current stack capability at full-HD payload.
+- Evidence to decide the next engineering move:
+	- If stable at target FPS: proceed to longer soak and then HDMI path integration.
+	- If unstable at target FPS: prioritize PS C shim + PL-first datapath migration before further feature work.
+
+Output location:
+
+- `artifacts/logs/<timestamp>_fullhd_fps_sweep/summary.txt`
 
 ## Corrected Packet vs Frame Benchmark (Copy/Paste)
 

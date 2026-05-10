@@ -127,6 +127,26 @@ Practical operating choice for current profile:
 - Default: `frame` crypto granularity.
 - Optional: large `chunk` values (`48000` to `96000`) when integration constraints require chunk boundaries while keeping near-frame throughput.
 
+### Breakpoint Sweep (Larger Frame Payloads)
+
+Additional end-to-end runs were executed at `frames=90`, `fps=15`, `segment_bytes=1200`, `inter-packet-gap-us=100`:
+
+- `frame_bytes=240000`:
+  - frame mode: stable, `throughput=23.70`, `latency_p95_ms=108.54`, no UDP error growth.
+  - chunk 96000: stable, `throughput=22.03`, `latency_p95_ms=125.64`, no UDP error growth.
+- `frame_bytes=480000`:
+  - frame mode: unstable (`frames_completed=73/90`), UDP receive buffer errors increased by `174`.
+  - chunk 96000: stable (`90/90`), no additional UDP error growth.
+- `frame_bytes=960000`:
+  - frame mode: unstable (`45/90`), UDP receive buffer errors increased by `6126`.
+  - chunk 96000: unstable (`45/90`), UDP receive buffer errors increased by `5640`.
+
+Interpretation from breakpoint sweep:
+
+- Up to `240000` bytes/frame, frame mode remains best overall.
+- Around `480000` bytes/frame, chunk mode (`96000`) is more robust than frame mode.
+- At `960000` bytes/frame with current pacing and software RX verify path, both modes exceed the stable envelope.
+
 ## Reproducible Commands
 
 Use the maintained copy-paste benchmark recipe in:
@@ -148,10 +168,11 @@ Start at the section:
 
 ## Next Engineering Steps
 
-1. Run the same packet/frame/chunk comparison at larger synthetic frame payloads (including full 1080p raw payload) to find the breakpoints.
-2. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
-3. Add automated benchmark regression scripts so granularity performance remains trackable across changes.
-4. Continue PS C shim and PL-first datapath migration for production throughput targets.
+1. Run the full-HD capacity gate script (`scripts/run_fullhd_fps_sweep.sh`) and lock the sustainable raw-FPS ceiling with pass/fail evidence.
+2. Tune pacing and scheduling for high-payload runs (`>=480000` bytes/frame), then re-run breakpoint tests to recover stability at larger frame sizes.
+3. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
+4. Add automated benchmark regression scripts so granularity performance remains trackable across changes.
+5. Continue PS C shim and PL-first datapath migration for production throughput targets.
 
 ## Source of Truth for Handover
 
