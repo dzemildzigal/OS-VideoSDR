@@ -86,6 +86,9 @@ class _DmaAead:
     def decrypt(self, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes) -> bytes:
         return self._engine.decrypt(nonce, aad, ciphertext, tag)
 
+    def close(self) -> None:
+        self._engine.close()
+
 
 class _ReplayState:
     def __init__(self) -> None:
@@ -399,6 +402,9 @@ def main() -> int:
         print("RX interrupted by user")
     finally:
         rx.close()
+        close_fn = getattr(cipher, "close", None)
+        if callable(close_fn):
+            close_fn()
 
     elapsed = max(1e-9, time.perf_counter() - started)
     print(

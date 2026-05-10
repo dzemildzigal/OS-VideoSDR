@@ -112,6 +112,12 @@ class _DmaAead:
     def encrypt(self, nonce: bytes, aad: bytes, plaintext: bytes) -> Tuple[bytes, bytes]:
         return self._engine.encrypt(nonce, aad, plaintext)
 
+    def stats_snapshot(self) -> Dict[str, float]:
+        return self._engine.performance_stats()
+
+    def close(self) -> None:
+        self._engine.close()
+
 
 def _load_yaml_dict(path: Path) -> Dict[str, Any]:
     if not path.exists():
@@ -395,6 +401,18 @@ def main() -> int:
                     f"packets={telemetry.packets_tx}",
                     f"throughput_mbps={mbps:.2f}",
                 )
+
+                stats_fn = getattr(cipher, "stats_snapshot", None)
+                if callable(stats_fn):
+                    dma_stats = stats_fn()
+                    print(
+                        "TX dma:",
+                        f"avg_encrypt_ms={dma_stats['avg_encrypt_ms']:.3f}",
+                        f"avg_dma_ms={dma_stats['avg_dma_ms']:.3f}",
+                        f"avg_control_ms={dma_stats['avg_control_ms']:.3f}",
+                        f"key_loads={int(dma_stats['key_loads'])}",
+                        f"buffer_pool_entries={int(dma_stats['buffer_pool_entries'])}",
+                    )
                 last_print = now
 
             next_frame_deadline += frame_period_s
@@ -406,6 +424,9 @@ def main() -> int:
         print("TX interrupted by user")
     finally:
         tx.close()
+        close_fn = getattr(cipher, "close", None)
+        if callable(close_fn):
+            close_fn()
 
     elapsed = max(1e-9, time.perf_counter() - started)
     mbps = (bytes_sent * 8.0) / (elapsed * 1_000_000.0)
@@ -415,6 +436,20 @@ def main() -> int:
         f"packets={telemetry.packets_tx}",
         f"throughput_mbps={mbps:.2f}",
     )
+
+    stats_fn = getattr(cipher, "stats_snapshot", None)
+    if callable(stats_fn):
+        dma_stats = stats_fn()
+        print(
+            "TX dma done:",
+            f"calls={int(dma_stats['encrypt_calls'])}",
+            f"avg_encrypt_ms={dma_stats['avg_encrypt_ms']:.3f}",
+            f"avg_dma_ms={dma_stats['avg_dma_ms']:.3f}",
+            f"avg_control_ms={dma_stats['avg_control_ms']:.3f}",
+            f"avg_tag_wait_ms={dma_stats['avg_tag_wait_ms']:.3f}",
+            f"key_loads={int(dma_stats['key_loads'])}",
+            f"buffer_pool_entries={int(dma_stats['buffer_pool_entries'])}",
+        )
     return 0
 
 

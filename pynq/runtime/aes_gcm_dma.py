@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import importlib
 from pathlib import Path
 import time
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 
 @dataclass(slots=True)
@@ -110,6 +110,18 @@ class AesGcmDmaEngine:
         self._aes: Any = None
         self._dma: Any = None
         self._allocate: Optional[Callable[..., Any]] = None
+        self._stream_mode_enabled = False
+        self._key_loaded = False
+        self._dma_buffer_pairs: Dict[int, Tuple[Any, Any]] = {}
+
+        self._encrypt_calls = 0
+        self._encrypt_bytes_in = 0
+        self._encrypt_total_s = 0.0
+        self._control_total_s = 0.0
+        self._dma_transfer_total_s = 0.0
+        self._tag_wait_total_s = 0.0
+        self._session_start_count = 0
+        self._key_load_count = 0
 
     def load(self) -> None:
         """Load overlay and bind DMA resources."""
@@ -143,6 +155,8 @@ class AesGcmDmaEngine:
             ) from exc
 
         self._allocate = allocate
+        self._stream_mode_enabled = False
+        self._key_loaded = False
         self.loaded = True
 
     def encrypt(self, nonce: bytes, aad: bytes, plaintext: bytes) -> Tuple[bytes, bytes]:
@@ -151,6 +165,7 @@ class AesGcmDmaEngine:
         Implement integration against the board's DMA control path.
         """
         self._require_loaded()
+        call_start_s = time.perf_counter()
 
         if len(nonce) != 12:
             raise ValueError(f"Nonce must be 12 bytes, got {len(nonce)}")
@@ -158,17 +173,16 @@ class AesGcmDmaEngine:
         if not plaintext:
             raise ValueError("Plaintext must not be empty")
 
-        self._set_stream_mode(True)
+        self._ensure_stream_mode_enabled()
+        self._ensure_key_loaded()
 
         padded_aad = _pad_to_block(aad)
         padded_plaintext = _pad_to_block(plaintext)
 
-        self._write_key(self._key)
         self._write_nonce(nonce)
         self._write_lengths(aad_len_bits=len(aad) * 8, pt_len_bits=len(plaintext) * 8)
-
-        self._load_key_and_wait()
         self._start_session_and_wait_ready()
+        self._session_start_count += 1
 
         aad_blocks = max(1, len(padded_aad) // 16) if len(aad) > 0 else 0
         for index in range(aad_blocks):
@@ -177,9 +191,23 @@ class AesGcmDmaEngine:
             block = padded_aad[start:end]
             self._push_aad_block(block, is_last=(index == aad_blocks - 1))
 
+        dma_start_s = time.perf_counter()
         ciphertext = self._stream_pt_collect_ct_dma(padded_plaintext)[: len(plaintext)]
+        dma_elapsed_s = time.perf_counter() - dma_start_s
+
+        tag_start_s = time.perf_counter()
         tag = self._wait_tag()
+        tag_elapsed_s = time.perf_counter() - tag_start_s
+
         self._assert_no_drops()
+
+        total_elapsed_s = time.perf_counter() - call_start_s
+        self._encrypt_calls += 1
+        self._encrypt_bytes_in += len(plaintext)
+        self._encrypt_total_s += total_elapsed_s
+        self._dma_transfer_total_s += dma_elapsed_s
+        self._tag_wait_total_s += tag_elapsed_s
+        self._control_total_s += max(0.0, total_elapsed_s - dma_elapsed_s)
         return ciphertext, tag
 
     def decrypt(self, nonce: bytes, aad: bytes, ciphertext: bytes, tag: bytes) -> bytes:
@@ -199,6 +227,63 @@ class AesGcmDmaEngine:
     def _require_loaded(self) -> None:
         if not self.loaded or self._aes is None or self._dma is None or self._allocate is None:
             raise RuntimeError("DMA engine not loaded; call load() first")
+
+    def close(self) -> None:
+        for tx, rx in self._dma_buffer_pairs.values():
+            try:
+                tx.freebuffer()
+            except Exception:
+                pass
+            try:
+                rx.freebuffer()
+            except Exception:
+                pass
+        self._dma_buffer_pairs.clear()
+
+    def performance_stats(self) -> Dict[str, float]:
+        calls = self._encrypt_calls
+        if calls > 0:
+            avg_encrypt_ms = (self._encrypt_total_s / calls) * 1000.0
+            avg_dma_ms = (self._dma_transfer_total_s / calls) * 1000.0
+            avg_control_ms = (self._control_total_s / calls) * 1000.0
+            avg_tag_wait_ms = (self._tag_wait_total_s / calls) * 1000.0
+        else:
+            avg_encrypt_ms = 0.0
+            avg_dma_ms = 0.0
+            avg_control_ms = 0.0
+            avg_tag_wait_ms = 0.0
+
+        return {
+            "encrypt_calls": float(calls),
+            "encrypt_bytes_in": float(self._encrypt_bytes_in),
+            "encrypt_total_s": self._encrypt_total_s,
+            "dma_transfer_total_s": self._dma_transfer_total_s,
+            "control_total_s": self._control_total_s,
+            "tag_wait_total_s": self._tag_wait_total_s,
+            "avg_encrypt_ms": avg_encrypt_ms,
+            "avg_dma_ms": avg_dma_ms,
+            "avg_control_ms": avg_control_ms,
+            "avg_tag_wait_ms": avg_tag_wait_ms,
+            "session_starts": float(self._session_start_count),
+            "key_loads": float(self._key_load_count),
+            "buffer_pool_entries": float(len(self._dma_buffer_pairs)),
+        }
+
+    def reset_performance_stats(self) -> None:
+        self._encrypt_calls = 0
+        self._encrypt_bytes_in = 0
+        self._encrypt_total_s = 0.0
+        self._control_total_s = 0.0
+        self._dma_transfer_total_s = 0.0
+        self._tag_wait_total_s = 0.0
+        self._session_start_count = 0
+        self._key_load_count = 0
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _status(self) -> int:
         return int(self._aes.read(STATUS))
@@ -250,6 +335,22 @@ class AesGcmDmaEngine:
                 "stream_mode=1",
             )
 
+    def _ensure_stream_mode_enabled(self) -> None:
+        if self._stream_mode_enabled:
+            return
+
+        self._set_stream_mode(True)
+        self._stream_mode_enabled = True
+
+    def _ensure_key_loaded(self) -> None:
+        if self._key_loaded:
+            return
+
+        self._write_key(self._key)
+        self._load_key_and_wait()
+        self._key_loaded = True
+        self._key_load_count += 1
+
     def _load_key_and_wait(self) -> None:
         self._aes.write(CTRL, CTRL_LOAD_KEY)
         self._wait_until(
@@ -285,23 +386,28 @@ class AesGcmDmaEngine:
         self._aes.write(CTRL, ctrl)
 
     def _stream_pt_collect_ct_dma(self, pt: bytes) -> bytes:
-        tx = self._allocate(shape=(len(pt),), dtype="u1")
-        rx = self._allocate(shape=(len(pt),), dtype="u1")
+        tx, rx = self._get_dma_buffers(len(pt))
 
-        try:
-            tx[:] = bytearray(pt)
-            tx.flush()
+        tx[:] = bytearray(pt)
+        tx.flush()
 
-            self._dma.recvchannel.transfer(rx)
-            self._dma.sendchannel.transfer(tx)
-            self._dma.sendchannel.wait()
-            self._dma.recvchannel.wait()
+        self._dma.recvchannel.transfer(rx)
+        self._dma.sendchannel.transfer(tx)
+        self._dma.sendchannel.wait()
+        self._dma.recvchannel.wait()
 
-            rx.invalidate()
-            return bytes(rx)
-        finally:
-            tx.freebuffer()
-            rx.freebuffer()
+        rx.invalidate()
+        return bytes(rx)
+
+    def _get_dma_buffers(self, payload_len: int) -> Tuple[Any, Any]:
+        buffers = self._dma_buffer_pairs.get(payload_len)
+        if buffers is not None:
+            return buffers
+
+        tx = self._allocate(shape=(payload_len,), dtype="u1")
+        rx = self._allocate(shape=(payload_len,), dtype="u1")
+        self._dma_buffer_pairs[payload_len] = (tx, rx)
+        return tx, rx
 
     def _wait_tag(self) -> bytes:
         self._wait_until(
