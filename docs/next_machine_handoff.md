@@ -80,12 +80,28 @@ Terminal B:
 
 ## Immediate Work Queue
 
+1. Re-run packet-vs-frame DMA benchmark with corrected RX timing to capture valid end-to-end RX counters.
 1. Implement PS C shim for minimal GEM descriptor loop.
 2. Implement PL descriptor producer for TX path.
 3. Integrate TX ring ownership protocol between PL and PS.
 4. Implement RX ring ingestion from PS to PL.
 5. Hook hardware counters to AXI-Lite map.
 6. Run U10 gate with PS C shim replacing Python data path.
+
+## Terminology Cheat Sheet (Plain Language)
+
+- Frame: one full video image payload handled by the sender loop (example: `120000` bytes in synthetic tests).
+- Packet: one UDP datagram on the wire, carrying one segment of a frame (example: `1200` bytes payload).
+- Chunk: how much data is passed to AES in one crypto call.
+	- Packet granularity: one AES call per packet.
+	- Frame granularity: one AES call per frame.
+	- Chunk granularity (next): one AES call per medium block, between packet and frame.
+
+Why this matters:
+
+- Too many tiny AES calls can dominate runtime even when AES hardware is fast.
+- Very large crypto units reduce call overhead, but can add buffering delay.
+- Practical low-latency target is usually a middle chunk size after measurement.
 
 ## Session Evidence (2026-05-10)
 
@@ -97,6 +113,33 @@ Terminal B:
 	- RX packet count significantly lower than TX packet count.
 	- `netstat -su` counters (`packet receive errors`, `receive buffer errors`) increased during the run.
 	- Result: PS Python path is not sufficient evidence for U15.
+
+## Session Evidence (2026-05-10, DMA Granularity Benchmark)
+
+Test shape:
+
+- `frames=300`, `fps=15`, synthetic frame bytes `120000`, segment bytes `1200`, inter-packet gap `100 us`.
+- Current overlay posture: TX uses DMA encrypt path, RX uses software AES-GCM verify/decrypt.
+
+Observed TX results:
+
+- Packet granularity:
+	- `TX done ... throughput_mbps=3.02`
+	- `TX dma done: calls=30000 avg_encrypt_ms=2.766 avg_dma_ms=1.451 avg_control_ms=1.315 avg_tag_wait_ms=0.205`
+- Frame granularity:
+	- `TX done ... throughput_mbps=15.07`
+	- `TX dma done: calls=300 avg_encrypt_ms=4.010 avg_dma_ms=2.794 avg_control_ms=1.216 avg_tag_wait_ms=0.237`
+
+Interpretation:
+
+- Throughput improved by about 5x (`15.07 / 3.02`) when switching from packet to frame granularity.
+- Main gain came from reducing crypto invocations (`30000` calls down to `300` calls), not from changing AES core behavior.
+
+Important caveat from this exact run:
+
+- RX logs showed `packets=0` and `frames=0` in both modes.
+- That run is valid TX-side evidence but not valid end-to-end RX/decrypt evidence.
+- Most likely cause: RX idle exit happened before TX started (and shell command sequencing needed cleanup).
 
 ## DMA Next Session Checklist
 
@@ -185,6 +228,47 @@ Run these commands on the PYNQ shell to restart quickly with logs and clear pass
 - Packet parity (TX packets == RX packets).
 - RX counters: `drops=0`, `decrypt_fail=0`, `reorder=0`.
 - No growth in UDP kernel receive buffer errors for the selected test profile.
+
+## Corrected Packet vs Frame Benchmark (Copy/Paste)
+
+Use this exact sequence on PYNQ to capture valid packet-vs-frame comparison with RX alive long enough.
+
+1. Setup.
+
+- cd /home/xilinx/jupyter_notebooks/OS-VideoSDR
+- export KEY_HEX=000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F
+- export FRAMES=300
+- export FPS=15
+- export FRAME_BYTES=120000
+- export IPG_US=100
+- export RUN_TS=$(date +%Y%m%d_%H%M%S)
+- export RUN_DIR=artifacts/logs/$RUN_TS
+- mkdir -p "$RUN_DIR"
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/00_udp_before.txt"
+
+2. Packet granularity run.
+
+- timeout 120s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames $FRAMES --max-runtime-s 120 --max-idle-s 30 --crypto-mode aesgcm --crypto-granularity packet --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/rx_dma_packet.txt" 2>&1 &
+- sleep 2
+- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames $FRAMES --fps $FPS --synthetic-frame-bytes $FRAME_BYTES --inter-packet-gap-us $IPG_US --crypto-mode dma --crypto-granularity packet --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/tx_dma_packet.txt" 2>&1
+- wait
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/01_udp_after_packet.txt"
+
+3. Frame granularity run.
+
+- timeout 120s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames $FRAMES --max-runtime-s 120 --max-idle-s 30 --crypto-mode aesgcm --crypto-granularity frame --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/rx_dma_frame.txt" 2>&1 &
+- sleep 2
+- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames $FRAMES --fps $FPS --synthetic-frame-bytes $FRAME_BYTES --inter-packet-gap-us $IPG_US --crypto-mode dma --crypto-granularity frame --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/tx_dma_frame.txt" 2>&1
+- wait
+- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/02_udp_after_frame.txt"
+
+4. Compare summary lines.
+
+- echo "=== PACKET MODE ==="
+- grep -E "TX done|TX dma done|RX done|throughput|drops=|decrypt_fail=|reorder=|latency_p95_ms=" "$RUN_DIR/tx_dma_packet.txt" "$RUN_DIR/rx_dma_packet.txt"
+- echo "=== FRAME MODE ==="
+- grep -E "TX done|TX dma done|RX done|throughput|drops=|decrypt_fail=|reorder=|latency_p95_ms=" "$RUN_DIR/tx_dma_frame.txt" "$RUN_DIR/rx_dma_frame.txt"
+- echo "Logs saved in $RUN_DIR"
 
 ## Definition of Done for Next Step
 
