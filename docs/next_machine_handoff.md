@@ -118,28 +118,38 @@ Why this matters:
 
 Test shape:
 
-- `frames=300`, `fps=15`, synthetic frame bytes `120000`, segment bytes `1200`, inter-packet gap `100 us`.
+- `frames=180`, `fps=15`, synthetic frame bytes `120000`, segment bytes `1200`, inter-packet gap `100 us`.
 - Current overlay posture: TX uses DMA encrypt path, RX uses software AES-GCM verify/decrypt.
 
-Observed TX results:
+Observed end-to-end results (validated):
 
 - Packet granularity:
-	- `TX done ... throughput_mbps=3.02`
-	- `TX dma done: calls=30000 avg_encrypt_ms=2.766 avg_dma_ms=1.451 avg_control_ms=1.315 avg_tag_wait_ms=0.205`
+	- `TX done ... throughput_mbps=2.93`
+	- `TX dma done: calls=18000 avg_encrypt_ms=2.858 avg_dma_ms=1.490 avg_control_ms=1.368 avg_tag_wait_ms=0.203`
+	- `RX done: frames=180 packets=18000 drops=0 decrypt_fail=0 reorder=0 latency_p95_ms=353.64`
 - Frame granularity:
 	- `TX done ... throughput_mbps=15.07`
-	- `TX dma done: calls=300 avg_encrypt_ms=4.010 avg_dma_ms=2.794 avg_control_ms=1.216 avg_tag_wait_ms=0.237`
+	- `TX dma done: calls=180 avg_encrypt_ms=4.095 avg_dma_ms=2.838 avg_control_ms=1.257 avg_tag_wait_ms=0.240`
+	- `RX done: frames=180 packets=18000 drops=0 decrypt_fail=0 reorder=0 latency_p95_ms=53.03`
 
-Interpretation:
+Chunk sweep results (same profile):
 
-- Throughput improved by about 5x (`15.07 / 3.02`) when switching from packet to frame granularity.
-- Main gain came from reducing crypto invocations (`30000` calls down to `300` calls), not from changing AES core behavior.
+- `chunk=4800`: `throughput=8.90`, `calls=4500`, `latency_p95_ms=146.11`
+- `chunk=12000`: `throughput=14.13`, `calls=1800`, `latency_p95_ms=93.34`
+- `chunk=24000`: `throughput=15.07`, `calls=900`, `latency_p95_ms=71.71`
+- `chunk=48000`: `throughput=15.07`, `calls=540`, `latency_p95_ms=65.05`
+- `chunk=96000`: `throughput=15.07`, `calls=360`, `latency_p95_ms=61.21`
 
-Important caveat from this exact run:
+Validation status from this sweep:
 
-- RX logs showed `packets=0` and `frames=0` in both modes.
-- That run is valid TX-side evidence but not valid end-to-end RX/decrypt evidence.
-- Most likely cause: RX idle exit happened before TX started (and shell command sequencing needed cleanup).
+- Packet parity reached in all cases (`frames=180`, `packets=18000`).
+- `drops=0`, `decrypt_fail=0`, `reorder=0` in all cases.
+- `netstat -su` receive buffer error counters remained unchanged.
+
+Current decision for this profile:
+
+- Default runtime granularity: `frame` (best observed latency at max observed throughput).
+- If chunk boundaries are required, prefer larger chunk sizes (`48000` to `96000`) for near-frame throughput.
 
 ## DMA Next Session Checklist
 

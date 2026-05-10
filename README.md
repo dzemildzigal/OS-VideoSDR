@@ -66,35 +66,66 @@ Granularity mapping:
 - aesgcm software: about 9 Mb/s class
 - dma with packet granularity: about 3 Mb/s class
 
-### Packet vs Frame DMA Granularity (TX Side)
+### Packet vs Frame DMA Granularity (Validated End-to-End)
 
 Test shape:
 
-- frames=300
+- frames=180
 - fps=15
 - frame payload=120000 bytes
 - packet payload=1200 bytes
 - inter-packet-gap-us=100
 
-Observed TX results:
+Observed results:
 
 - Packet granularity:
-  - throughput about 3.02 Mb/s
-  - dma calls=30000
+  - TX throughput: 2.93 Mb/s
+  - TX dma calls: 18000
+  - RX: frames=180 packets=18000 drops=0 decrypt_fail=0 reorder=0
+  - p95 latency: 353.64 ms
 - Frame granularity:
-  - throughput about 15.07 Mb/s
-  - dma calls=300
+  - TX throughput: 15.07 Mb/s
+  - TX dma calls: 180
+  - RX: frames=180 packets=18000 drops=0 decrypt_fail=0 reorder=0
+  - p95 latency: 53.03 ms
+
+### Chunk Sweep (Validated End-to-End)
+
+Chunk mode was measured with the same test shape.
+
+- chunk 4800:
+  - TX throughput: 8.90 Mb/s
+  - TX dma calls: 4500
+  - p95 latency: 146.11 ms
+- chunk 12000:
+  - TX throughput: 14.13 Mb/s
+  - TX dma calls: 1800
+  - p95 latency: 93.34 ms
+- chunk 24000:
+  - TX throughput: 15.07 Mb/s
+  - TX dma calls: 900
+  - p95 latency: 71.71 ms
+- chunk 48000:
+  - TX throughput: 15.07 Mb/s
+  - TX dma calls: 540
+  - p95 latency: 65.05 ms
+- chunk 96000:
+  - TX throughput: 15.07 Mb/s
+  - TX dma calls: 360
+  - p95 latency: 61.21 ms
+
+All chunk runs completed with RX parity (frames=180, packets=18000), no drops/decrypt failures/reorder, and zero UDP receive buffer error growth.
 
 Interpretation:
 
-- The large gain came from reducing per-call orchestration overhead, not from changing AES core logic.
-- Fewer, larger crypto calls are currently much more efficient than many tiny calls.
+- The primary gain comes from reducing per-call orchestration overhead, not changing AES core behavior.
+- Fewer, larger crypto calls are much more efficient than many tiny calls in this runtime architecture.
+- For this 120000-byte frame profile, frame mode is currently the best latency choice at max observed throughput.
 
-Important caveat for that exact run:
+Practical operating choice for current profile:
 
-- RX logs showed zero packets and zero frames in both modes.
-- That run is valid as TX-side evidence only.
-- Re-run with corrected RX timing before using as end-to-end proof.
+- Default: `frame` crypto granularity.
+- Optional: large `chunk` values (`48000` to `96000`) when integration constraints require chunk boundaries while keeping near-frame throughput.
 
 ## Reproducible Commands
 
@@ -117,9 +148,9 @@ Start at the section:
 
 ## Next Engineering Steps
 
-1. Re-run packet vs frame benchmark with corrected RX timing and collect valid RX parity counters.
-2. Add chunk-level crypto mode and sweep chunk sizes for latency versus throughput tradeoff.
-3. Validate a decrypt-capable DMA overlay for true RX hardware path.
+1. Run the same packet/frame/chunk comparison at larger synthetic frame payloads (including full 1080p raw payload) to find the breakpoints.
+2. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
+3. Add automated benchmark regression scripts so granularity performance remains trackable across changes.
 4. Continue PS C shim and PL-first datapath migration for production throughput targets.
 
 ## Source of Truth for Handover
