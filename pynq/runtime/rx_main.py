@@ -311,6 +311,7 @@ def main() -> int:
 
     replay_state_by_key: Dict[int, _ReplayState] = {}
     frame_meta_by_key: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
+    frame_meta_limit = max(2, args.max_active_frames * 2)
     latency_ms: List[float] = []
 
     started = time.perf_counter()
@@ -413,6 +414,9 @@ def main() -> int:
                 meta = frame_meta_by_key.get(frame_key)
 
                 if meta is None:
+                    if len(frame_meta_by_key) >= frame_meta_limit:
+                        # Reassembler evicts old incomplete frames; keep metadata bounded too.
+                        frame_meta_by_key.pop(next(iter(frame_meta_by_key)), None)
                     frame_meta_by_key[frame_key] = {
                         "nonce_counter": header.nonce_counter,
                         "key_id": header.key_id,
