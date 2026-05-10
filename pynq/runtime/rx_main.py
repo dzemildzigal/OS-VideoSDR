@@ -15,7 +15,7 @@ import socket
 import struct
 import sys
 import time
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -253,10 +253,15 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
     parser.add_argument(
         "--crypto-granularity",
-        choices=["packet", "frame"],
+        choices=["packet", "frame", "chunk"],
         default="packet",
-        help="packet: decrypt each transport segment; frame: reassemble ciphertext then decrypt once",
+        help=(
+            "packet: decrypt each transport segment; "
+            "frame: reassemble ciphertext then decrypt once; "
+            "chunk: reassemble ciphertext frame, split by chunk nonce, then decrypt each chunk"
+        ),
     )
+    parser.add_argument("--crypto-chunk-bytes", type=int, default=24_000)
     parser.add_argument("--key-hex", default="")
     parser.add_argument("--dma-bitstream", default="aes_gcm_dma_wrapper.bit")
     parser.add_argument("--dma-ip-name", default="aes_gcm_0")
@@ -288,6 +293,10 @@ def main() -> int:
     if args.replay_window <= 0:
         raise ValueError("replay-window must be > 0")
 
+    crypto_chunk_bytes = int(args.crypto_chunk_bytes)
+    if crypto_chunk_bytes <= 0:
+        raise ValueError("crypto-chunk-bytes must be > 0")
+
     cipher = _build_cipher(
         mode=args.crypto_mode,
         key_hex=args.key_hex,
@@ -310,7 +319,8 @@ def main() -> int:
     )
 
     replay_state_by_key: Dict[int, _ReplayState] = {}
-    frame_meta_by_key: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
+    frame_mode_meta_by_key: Dict[Tuple[int, int, int], Dict[str, Any]] = {}
+    chunk_mode_segment_meta_by_key: Dict[Tuple[int, int, int], Dict[int, Dict[str, Any]]] = {}
     frame_meta_limit = max(2, args.max_active_frames * 2)
     latency_ms: List[float] = []
 
@@ -323,6 +333,7 @@ def main() -> int:
         f"listen={bind_ip}:{listen_port}",
         f"crypto_mode={args.crypto_mode}",
         f"crypto_granularity={args.crypto_granularity}",
+        f"crypto_chunk_bytes={crypto_chunk_bytes}",
         f"replay_window={args.replay_window}",
         f"max_runtime_s={args.max_runtime_s}",
         f"max_idle_s={args.max_idle_s}",
@@ -409,15 +420,15 @@ def main() -> int:
                         latency_ms.append(end_to_end_ms)
                         if len(latency_ms) > 4096:
                             latency_ms = latency_ms[-2048:]
-            else:
+            elif args.crypto_granularity == "frame":
                 frame_key = (header.session_id, header.stream_id, header.frame_id)
-                meta = frame_meta_by_key.get(frame_key)
+                meta = frame_mode_meta_by_key.get(frame_key)
 
                 if meta is None:
-                    if len(frame_meta_by_key) >= frame_meta_limit:
+                    if len(frame_mode_meta_by_key) >= frame_meta_limit:
                         # Reassembler evicts old incomplete frames; keep metadata bounded too.
-                        frame_meta_by_key.pop(next(iter(frame_meta_by_key)), None)
-                    frame_meta_by_key[frame_key] = {
+                        frame_mode_meta_by_key.pop(next(iter(frame_mode_meta_by_key)), None)
+                    frame_mode_meta_by_key[frame_key] = {
                         "nonce_counter": header.nonce_counter,
                         "key_id": header.key_id,
                         "payload_type": header.payload_type,
@@ -446,7 +457,7 @@ def main() -> int:
                 if maybe_ciphertext_frame is None:
                     continue
 
-                meta = frame_meta_by_key.pop(frame_key, None)
+                meta = frame_mode_meta_by_key.pop(frame_key, None)
                 if meta is None:
                     telemetry.packets_dropped += 1
                     continue
@@ -481,6 +492,201 @@ def main() -> int:
 
                 telemetry.frames_completed += 1
                 source_ts = int(meta.get("source_timestamp_ns", 0))
+                if source_ts > 0:
+                    end_to_end_ms = (time.time_ns() - source_ts) / 1_000_000.0
+                    latency_ms.append(end_to_end_ms)
+                    if len(latency_ms) > 4096:
+                        latency_ms = latency_ms[-2048:]
+            else:
+                frame_key = (header.session_id, header.stream_id, header.frame_id)
+                segment_meta = chunk_mode_segment_meta_by_key.get(frame_key)
+                if segment_meta is None:
+                    if len(chunk_mode_segment_meta_by_key) >= frame_meta_limit:
+                        chunk_mode_segment_meta_by_key.pop(next(iter(chunk_mode_segment_meta_by_key)), None)
+                    segment_meta = {}
+                    chunk_mode_segment_meta_by_key[frame_key] = segment_meta
+
+                existing = segment_meta.get(header.segment_id)
+                if existing is None:
+                    segment_meta[header.segment_id] = {
+                        "nonce_counter": header.nonce_counter,
+                        "key_id": header.key_id,
+                        "payload_type": header.payload_type,
+                        "tag": tag,
+                        "payload_length": len(ciphertext),
+                        "source_timestamp_ns": header.source_timestamp_ns,
+                    }
+                else:
+                    if (
+                        int(existing["nonce_counter"]) != header.nonce_counter
+                        or int(existing["key_id"]) != header.key_id
+                        or int(existing["payload_type"]) != header.payload_type
+                        or existing["tag"] != tag
+                        or int(existing["payload_length"]) != len(ciphertext)
+                    ):
+                        telemetry.packets_dropped += 1
+                        continue
+
+                    if header.source_timestamp_ns > 0:
+                        current_ts = int(existing.get("source_timestamp_ns", 0))
+                        if current_ts == 0 or header.source_timestamp_ns < current_ts:
+                            existing["source_timestamp_ns"] = header.source_timestamp_ns
+
+                maybe_ciphertext_frame = reassembler.push(header, ciphertext)
+                if maybe_ciphertext_frame is None:
+                    continue
+
+                segment_meta = chunk_mode_segment_meta_by_key.pop(frame_key, None)
+                if segment_meta is None:
+                    telemetry.packets_dropped += 1
+                    continue
+
+                expected_segment_count = header.segment_count
+                if len(segment_meta) != expected_segment_count:
+                    telemetry.packets_dropped += 1
+                    continue
+
+                frame_session_id, frame_stream_id, frame_id_value = frame_key
+                plaintext_chunks: List[bytes] = []
+                current_nonce: Optional[int] = None
+                current_key_id: Optional[int] = None
+                current_payload_type: Optional[int] = None
+                current_tag: Optional[bytes] = None
+                current_parts: List[bytes] = []
+                source_ts = 0
+                offset = 0
+                chunk_error = False
+
+                def _decrypt_chunk(
+                    nonce_counter_value: int,
+                    key_id_value: int,
+                    payload_type_value: int,
+                    tag_value: bytes,
+                    chunk_ciphertext: bytes,
+                ) -> Optional[bytes]:
+                    replay_state = replay_state_by_key.setdefault(key_id_value, _ReplayState())
+                    if replay_state.latest_nonce >= 0 and nonce_counter_value < replay_state.latest_nonce:
+                        telemetry.reorder_events += 1
+
+                    if not replay_state.accept(nonce_counter_value, args.replay_window):
+                        telemetry.packets_dropped += 1
+                        return None
+
+                    nonce = _nonce_bytes(frame_session_id, nonce_counter_value)
+                    aad = _frame_aad(
+                        session_id=frame_session_id,
+                        stream_id=frame_stream_id,
+                        frame_id=frame_id_value,
+                        key_id=key_id_value,
+                        payload_type=payload_type_value,
+                        payload_length=len(chunk_ciphertext),
+                        nonce_counter=nonce_counter_value,
+                    )
+
+                    try:
+                        return cipher.decrypt(nonce, aad, chunk_ciphertext, tag_value)
+                    except Exception:
+                        telemetry.decrypt_failures += 1
+                        telemetry.packets_dropped += 1
+                        return None
+
+                for segment_id in range(expected_segment_count):
+                    meta = segment_meta.get(segment_id)
+                    if meta is None:
+                        telemetry.packets_dropped += 1
+                        chunk_error = True
+                        break
+
+                    payload_length = int(meta["payload_length"])
+                    next_offset = offset + payload_length
+                    if next_offset > len(maybe_ciphertext_frame):
+                        telemetry.packets_dropped += 1
+                        chunk_error = True
+                        break
+
+                    segment_ciphertext = maybe_ciphertext_frame[offset:next_offset]
+                    offset = next_offset
+
+                    segment_nonce = int(meta["nonce_counter"])
+                    segment_key_id = int(meta["key_id"])
+                    segment_payload_type = int(meta["payload_type"])
+                    segment_tag = meta["tag"]
+
+                    segment_source_ts = int(meta.get("source_timestamp_ns", 0))
+                    if segment_source_ts > 0 and (source_ts == 0 or segment_source_ts < source_ts):
+                        source_ts = segment_source_ts
+
+                    if current_nonce is None:
+                        current_nonce = segment_nonce
+                        current_key_id = segment_key_id
+                        current_payload_type = segment_payload_type
+                        current_tag = segment_tag
+                        current_parts = [segment_ciphertext]
+                        continue
+
+                    if segment_nonce == current_nonce:
+                        if (
+                            segment_key_id != current_key_id
+                            or segment_payload_type != current_payload_type
+                            or segment_tag != current_tag
+                        ):
+                            telemetry.packets_dropped += 1
+                            chunk_error = True
+                            break
+
+                        current_parts.append(segment_ciphertext)
+                        continue
+
+                    chunk_ciphertext = b"".join(current_parts)
+                    chunk_plaintext = _decrypt_chunk(
+                        nonce_counter_value=current_nonce,
+                        key_id_value=int(current_key_id),
+                        payload_type_value=int(current_payload_type),
+                        tag_value=current_tag if current_tag is not None else b"",
+                        chunk_ciphertext=chunk_ciphertext,
+                    )
+                    if chunk_plaintext is None:
+                        chunk_error = True
+                        break
+
+                    plaintext_chunks.append(chunk_plaintext)
+                    current_nonce = segment_nonce
+                    current_key_id = segment_key_id
+                    current_payload_type = segment_payload_type
+                    current_tag = segment_tag
+                    current_parts = [segment_ciphertext]
+
+                if chunk_error:
+                    continue
+
+                if offset != len(maybe_ciphertext_frame):
+                    telemetry.packets_dropped += 1
+                    continue
+
+                if (
+                    current_nonce is None
+                    or current_key_id is None
+                    or current_payload_type is None
+                    or current_tag is None
+                ):
+                    telemetry.packets_dropped += 1
+                    continue
+
+                final_chunk_ciphertext = b"".join(current_parts)
+                final_chunk_plaintext = _decrypt_chunk(
+                    nonce_counter_value=current_nonce,
+                    key_id_value=current_key_id,
+                    payload_type_value=current_payload_type,
+                    tag_value=current_tag,
+                    chunk_ciphertext=final_chunk_ciphertext,
+                )
+                if final_chunk_plaintext is None:
+                    continue
+
+                plaintext_chunks.append(final_chunk_plaintext)
+                _plaintext = b"".join(plaintext_chunks)
+
+                telemetry.frames_completed += 1
                 if source_ts > 0:
                     end_to_end_ms = (time.time_ns() - source_ts) / 1_000_000.0
                     latency_ms.append(end_to_end_ms)
