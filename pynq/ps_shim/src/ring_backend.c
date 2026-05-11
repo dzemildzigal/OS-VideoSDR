@@ -213,6 +213,7 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     uint32_t slot_payload_bytes = parse_env_u32("OSV_RING_SLOT_PAYLOAD_BYTES", DEFAULT_SLOT_PAYLOAD_BYTES);
     uint32_t uio_map_index = parse_env_u32("OSV_RING_UIO_MAP_INDEX", 0);
     uint32_t uio_ring_offset = parse_env_u32("OSV_RING_UIO_RING_OFFSET", 0);
+    bool uio_allow_reset = parse_env_u32("OSV_RING_UIO_ALLOW_RESET", 0) > 0;
     bool debug_enabled = parse_env_u32("OSV_RING_DEBUG", 0) > 0;
     struct stat st;
     RingHeader disk_header;
@@ -347,6 +348,17 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         should_reset_ring = true;
     }
 
+    if (should_reset_ring && is_char_device && !uio_allow_reset) {
+        fprintf(stderr,
+                "ring_open: refusing to initialize char-device mapping %s because ring header is invalid "
+                "or layout mismatched; set OSV_RING_UIO_ALLOW_RESET=1 only for dedicated ring memory\n",
+                dev_path);
+        munmap(map_base, map_len);
+        close(fd);
+        errno = ENODEV;
+        return -1;
+    }
+
     if (should_reset_ring) {
         memset((void *)header, 0, needed_len);
         header->magic = RING_MAGIC;
@@ -374,7 +386,7 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     if (debug_enabled) {
         fprintf(stderr,
                 "ring_open: dev=%s char=%d map_len=%zu map_index=%u ring_offset=%zu "
-                "slot_count=%u slot_payload=%u needed_len=%zu reset=%d\n",
+                "slot_count=%u slot_payload=%u needed_len=%zu reset=%d uio_allow_reset=%d\n",
                 dev_path,
                 is_char_device ? 1 : 0,
                 map_len,
@@ -383,7 +395,8 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
                 (unsigned)ctx->slot_count,
                 (unsigned)ctx->slot_payload_bytes,
                 needed_len,
-                should_reset_ring ? 1 : 0);
+                should_reset_ring ? 1 : 0,
+                uio_allow_reset ? 1 : 0);
     }
 
     return 0;

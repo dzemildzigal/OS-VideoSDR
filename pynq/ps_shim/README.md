@@ -67,6 +67,7 @@ Optional environment overrides:
 - `OSV_RING_TIMEOUT_MS` (default `250`)
 - `OSV_RING_UIO_MAP_INDEX` (default `0`, used when `--ring-dev-path` is `/dev/uioX`)
 - `OSV_RING_UIO_RING_OFFSET` (default `0`, byte offset inside mapped UIO map)
+- `OSV_RING_UIO_ALLOW_RESET` (default `0`; set to `1` only when `/dev/uioX` points to dedicated ring memory)
 - `OSV_RING_DEBUG` (default `0`, set `1` to print ring open diagnostics)
 
 Example:
@@ -88,6 +89,11 @@ export OSV_RING_UIO_RING_OFFSET=0
 
 - The current mmap ring prototype is memory polling based.
 - No ring interrupt activity is expected unless a board-native UIO/device backend with IRQ wiring is integrated.
+
+## UIO Safety Note
+
+- The backend now refuses to auto-initialize `/dev/uioX` mappings unless `OSV_RING_UIO_ALLOW_RESET=1` is set.
+- This prevents accidental writes across MMIO register apertures that are not dedicated ring memory.
 
 ## Next Integration Step
 
