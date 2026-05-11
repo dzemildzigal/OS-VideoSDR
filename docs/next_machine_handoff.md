@@ -148,6 +148,32 @@ Why this matters:
 - Decision: pivot active throughput-path implementation from Python runtime to PS C shim + PL descriptor-ring integration.
 - Python runtime remains the protocol and diagnostics harness.
 
+## Session Evidence (2026-05-11, C-Shim A/B and UIO Discovery)
+
+Profile A (identical bounded run, `frames=120`, `fps=15`, `frame_bytes=120000`, `segment_bytes=1200`):
+
+- Socket TX: `throughput_mbps=14.40`, RX completed `12000` packets.
+- Ring TX (mmap prototype): `throughput_mbps=14.40`, RX completed `12000` packets.
+- Interpretation: this run is frame-rate limited by configuration; both backends match expected payload rate.
+
+Profile B (stress run, `max-runtime-s=20`, `fps=500`, `frame_bytes=120000`, `segment_bytes=1200`, no inter-packet gap):
+
+- Socket TX: `throughput_mbps=251.78`, RX observed `throughput_mbps=225.39` at run end.
+- Ring TX (mmap prototype): `throughput_mbps=480.00`, RX observed `throughput_mbps=433.29` at run end.
+- Interpretation: mmap ring prototype is about `1.7x` faster than socket path for this stress profile.
+
+UIO discovery on board:
+
+- `/dev/uio0`: `audio-codec-ctrl` (`audio-codec-ctrl@43c00000`).
+- `/dev/uio1`: `fabric` (`fabric@40000000`).
+- No dedicated ring-named device found under `/dev`.
+- During current prototype runs, no ring-specific interrupt activity was observed.
+
+Current backend status after this evidence:
+
+- `pynq/ps_shim/src/ring_backend.c` now supports mmap file path and `/dev/uioX` mapping path with env-selectable map index and ring offset.
+- It is still a polling transport prototype; board-native PL ownership and IRQ-backed flow remain open integration work.
+
 ## Session Evidence (2026-05-10, DMA Granularity Benchmark)
 
 Test shape:

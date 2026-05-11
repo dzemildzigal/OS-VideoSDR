@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,6 +63,99 @@ static uint32_t parse_env_u32(const char *name, uint32_t fallback) {
     return (uint32_t)parsed;
 }
 
+static bool path_looks_like_uio(const char *path) {
+    const char *base = 0;
+    if (path == 0) {
+        return false;
+    }
+
+    base = strrchr(path, '/');
+    if (base != 0) {
+        base += 1;
+    } else {
+        base = path;
+    }
+
+    return strncmp(base, "uio", 3) == 0;
+}
+
+static int parse_uio_index(const char *path, uint32_t *index_out) {
+    const char *base = 0;
+    char *end = 0;
+    unsigned long value = 0;
+
+    if (path == 0 || index_out == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    base = strrchr(path, '/');
+    if (base != 0) {
+        base += 1;
+    } else {
+        base = path;
+    }
+
+    if (strncmp(base, "uio", 3) != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    value = strtoul(base + 3, &end, 10);
+    if (end == base + 3 || *end != '\0' || value > 0xFFFFFFFFUL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *index_out = (uint32_t)value;
+    return 0;
+}
+
+static int read_uio_map_size(const char *uio_path, uint32_t map_index, size_t *size_out) {
+    char sysfs_path[256];
+    char content[64];
+    FILE *fp = 0;
+    uint32_t uio_index = 0;
+    char *end = 0;
+    unsigned long long size_value = 0;
+
+    if (uio_path == 0 || size_out == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    if (parse_uio_index(uio_path, &uio_index) != 0) {
+        return -1;
+    }
+
+    snprintf(sysfs_path,
+             sizeof(sysfs_path),
+             "/sys/class/uio/uio%u/maps/map%u/size",
+             (unsigned)uio_index,
+             (unsigned)map_index);
+
+    fp = fopen(sysfs_path, "r");
+    if (fp == 0) {
+        return -1;
+    }
+
+    if (fgets(content, sizeof(content), fp) == 0) {
+        fclose(fp);
+        errno = EIO;
+        return -1;
+    }
+    fclose(fp);
+
+    size_value = strtoull(content, &end, 0);
+    if (end == content || size_value == 0ULL || size_value > (unsigned long long)SIZE_MAX) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    *size_out = (size_t)size_value;
+    return 0;
+}
+
 static bool is_valid_header(const RingHeader *header) {
     if (header == 0) {
         return false;
@@ -117,12 +211,20 @@ static RingSlot *ring_slots(const RingContext *ctx) {
 int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     uint32_t slot_count = parse_env_u32("OSV_RING_SLOT_COUNT", DEFAULT_SLOT_COUNT);
     uint32_t slot_payload_bytes = parse_env_u32("OSV_RING_SLOT_PAYLOAD_BYTES", DEFAULT_SLOT_PAYLOAD_BYTES);
+    uint32_t uio_map_index = parse_env_u32("OSV_RING_UIO_MAP_INDEX", 0);
+    uint32_t uio_ring_offset = parse_env_u32("OSV_RING_UIO_RING_OFFSET", 0);
     struct stat st;
     RingHeader disk_header;
-    size_t map_len = 0;
-    bool have_disk_header = false;
-    void *map_base = 0;
     RingHeader *header = 0;
+    size_t map_len = 0;
+    size_t mmap_offset = 0;
+    size_t ring_offset = 0;
+    size_t available_len = 0;
+    size_t needed_len = 0;
+    bool have_disk_header = false;
+    bool is_char_device = false;
+    void *map_base = 0;
+    int open_flags = O_RDWR;
     int fd = -1;
 
     if (ctx == 0 || dev_path == 0) {
@@ -140,7 +242,11 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         slot_payload_bytes = 256;
     }
 
-    fd = open(dev_path, O_RDWR | O_CREAT, 0666);
+    if (!path_looks_like_uio(dev_path)) {
+        open_flags |= O_CREAT;
+    }
+
+    fd = open(dev_path, open_flags, 0666);
     if (fd < 0) {
         return -1;
     }
@@ -150,8 +256,10 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         return -1;
     }
 
+    is_char_device = S_ISCHR(st.st_mode);
+
     memset(&disk_header, 0, sizeof(disk_header));
-    if ((size_t)st.st_size >= sizeof(disk_header)) {
+    if (!is_char_device && (size_t)st.st_size >= sizeof(disk_header)) {
         ssize_t n = pread(fd, &disk_header, sizeof(disk_header), 0);
         if (n == (ssize_t)sizeof(disk_header) && is_valid_header(&disk_header)) {
             slot_count = disk_header.slot_count;
@@ -160,30 +268,79 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         }
     }
 
-    map_len = ring_map_size(slot_count, slot_payload_bytes);
-    if (map_len == 0) {
-        close(fd);
-        errno = EOVERFLOW;
-        return -1;
-    }
-
-    if ((size_t)st.st_size < map_len) {
-        if (ftruncate(fd, (off_t)map_len) != 0) {
+    if (is_char_device) {
+        if (read_uio_map_size(dev_path, uio_map_index, &map_len) != 0) {
+            perror("read_uio_map_size");
             close(fd);
+            return -1;
+        }
+        mmap_offset = (size_t)getpagesize() * (size_t)uio_map_index;
+        ring_offset = (size_t)uio_ring_offset;
+    } else {
+        map_len = ring_map_size(slot_count, slot_payload_bytes);
+        if (map_len == 0) {
+            close(fd);
+            errno = EOVERFLOW;
             return -1;
         }
     }
 
-    map_base = mmap(0, map_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (!is_char_device) {
+        if ((size_t)st.st_size < map_len) {
+            if (ftruncate(fd, (off_t)map_len) != 0) {
+                close(fd);
+                return -1;
+            }
+        }
+    }
+
+    map_base = mmap(0, map_len, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)mmap_offset);
     if (map_base == MAP_FAILED) {
         close(fd);
         return -1;
     }
 
-    header = (RingHeader *)map_base;
+    if (ring_offset > map_len || (map_len - ring_offset) < sizeof(RingHeader)) {
+        fprintf(stderr,
+                "ring_open: map too small for header (map_len=%zu ring_offset=%zu)\n",
+                map_len,
+                ring_offset);
+        munmap(map_base, map_len);
+        close(fd);
+        errno = ENOSPC;
+        return -1;
+    }
+
+    available_len = map_len - ring_offset;
+    header = (RingHeader *)((uint8_t *)map_base + ring_offset);
+
+    needed_len = ring_map_size(slot_count, slot_payload_bytes);
+    if (needed_len == 0 || needed_len > available_len) {
+        size_t per_slot = sizeof(RingSlot) + (size_t)slot_payload_bytes;
+        size_t max_slots = 0;
+
+        if (available_len > sizeof(RingHeader) && per_slot > 0) {
+            max_slots = (available_len - sizeof(RingHeader)) / per_slot;
+        }
+        if (max_slots < 2) {
+            fprintf(stderr,
+                    "ring_open: map too small (available=%zu needed=%zu slot_payload=%u)\n",
+                    available_len,
+                    needed_len,
+                    (unsigned)slot_payload_bytes);
+            munmap(map_base, map_len);
+            close(fd);
+            errno = ENOSPC;
+            return -1;
+        }
+
+        slot_count = (uint32_t)max_slots;
+        needed_len = ring_map_size(slot_count, slot_payload_bytes);
+    }
+
     if (!have_disk_header || !is_valid_header(header) || header->slot_count != slot_count ||
         header->slot_payload_bytes != slot_payload_bytes) {
-        memset(map_base, 0, map_len);
+        memset((void *)header, 0, needed_len);
         header->magic = RING_MAGIC;
         header->version = RING_VERSION;
         header->slot_count = slot_count;
@@ -200,7 +357,7 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     ctx->slot_count = header->slot_count;
     ctx->slot_payload_bytes = header->slot_payload_bytes;
     ctx->timeout_ms = parse_env_u32("OSV_RING_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
-    ctx->slot_base = (void *)((uint8_t *)map_base + sizeof(RingHeader));
+    ctx->slot_base = (void *)((uint8_t *)header + sizeof(RingHeader));
     ctx->payload_base =
         (uint8_t *)ctx->slot_base + ((size_t)ctx->slot_count * sizeof(RingSlot));
     ctx->write_index = &header->write_index;

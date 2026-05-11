@@ -10,7 +10,7 @@ Build an end-to-end encrypted live video link in three stages:
 2. SDR transport on AntSDR E310 with the same packet and crypto contract.
 3. Frequency hopping after the non-hopping radio path is stable.
 
-## Current Status (2026-05-10)
+## Current Status (2026-05-11)
 
 - Protocol and runtime bring-up harnesses are implemented and tested.
 - Python runtime scripts are functional for validation and benchmarking:
@@ -70,6 +70,26 @@ Granularity mapping:
 - none: about 15 Mb/s class
 - aesgcm software: about 9 Mb/s class
 - dma with packet granularity: about 3 Mb/s class
+
+### PS C Shim Transport A/B (2026-05-11)
+
+Identical bounded run (`frames=120`, `fps=15`, `frame_bytes=120000`, `segment_bytes=1200`):
+
+- socket TX: `14.40 Mb/s`
+- ring TX (mmap prototype): `14.40 Mb/s`
+- interpretation: both are frame-rate limited at this profile.
+
+Stress run (`max-runtime-s=20`, `fps=500`, no inter-packet gap):
+
+- socket TX: `251.78 Mb/s`, socket RX final: `225.39 Mb/s`
+- ring TX (mmap prototype): `480.00 Mb/s`, ring RX final: `433.29 Mb/s`
+- interpretation: ring prototype is about `1.7x` faster than socket transport for this stress shape.
+
+UIO discovery on board:
+
+- `/dev/uio0`: `audio-codec-ctrl`
+- `/dev/uio1`: `fabric`
+- no dedicated ring-named device was present in `/dev`.
 
 ### Packet vs Frame DMA Granularity (Validated End-to-End)
 

@@ -65,6 +65,8 @@ Optional environment overrides:
 - `OSV_RING_SLOT_COUNT` (default `2048`)
 - `OSV_RING_SLOT_PAYLOAD_BYTES` (default `2048`)
 - `OSV_RING_TIMEOUT_MS` (default `250`)
+- `OSV_RING_UIO_MAP_INDEX` (default `0`, used when `--ring-dev-path` is `/dev/uioX`)
+- `OSV_RING_UIO_RING_OFFSET` (default `0`, byte offset inside mapped UIO map)
 
 Example:
 
@@ -72,6 +74,19 @@ Example:
 export OSV_RING_SLOT_COUNT=4096
 export OSV_RING_SLOT_PAYLOAD_BYTES=4096
 ```
+
+UIO example:
+
+```bash
+export OSV_RING_UIO_MAP_INDEX=0
+export OSV_RING_UIO_RING_OFFSET=0
+./pynq/ps_shim/build/ps_shim --mode rx --transport-backend ring --ring-dev-path /dev/uio1 --max-runtime-s 20 --frame-bytes 120000 --segment-bytes 1200
+```
+
+## Interrupt Expectations
+
+- The current mmap ring prototype is memory polling based.
+- No ring interrupt activity is expected unless a board-native UIO/device backend with IRQ wiring is integrated.
 
 ## Next Integration Step
 
