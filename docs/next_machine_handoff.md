@@ -10,7 +10,7 @@ This file is the continuation checklist for moving development to another comput
 - PL-first architecture decision and constraints are documented.
 - PYNQ PS protocol bring-up is now validated at synthetic low-to-medium payload rates.
 - Full-frame 1080p raw smoke tests on PS software path still show kernel RX buffer drops.
-- PS C shim scaffold now exists with runnable UDP TX/RX baseline in `pynq/ps_shim`.
+- PS C shim now has runnable TX/RX with selectable `socket` or mmap `ring` transport backend in `pynq/ps_shim`.
 - U10 and U15 acceptance gates are still open pending DMA + PL-first data path progress.
 
 Key docs:
@@ -88,7 +88,7 @@ Terminal B:
 ## Immediate Work Queue
 
 1. Build and validate `pynq/ps_shim/build/ps_shim` loopback baseline on PYNQ.
-2. Replace `pynq/ps_shim/src/ring_stub.c` with real ring backend (`/dev` or UIO path).
+2. Adapt `pynq/ps_shim/src/ring_backend.c` from mmap prototype to board-native ring backend (`/dev` or UIO path).
 3. Integrate TX ring ownership protocol between PL and PS.
 4. Implement RX ring ingestion from PS to PL.
 5. Hook hardware counters to AXI-Lite map.

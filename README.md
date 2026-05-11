@@ -18,6 +18,7 @@ Build an end-to-end encrypted live video link in three stages:
   - [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py)
 - PS C shim scaffold is available for lower-overhead transport bring-up:
   - [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
+- PS C shim now supports selectable `socket` and `ring` transport backends, with an mmap-backed ring prototype ready for board-native backend adaptation.
 - DMA AES adapter is integrated in:
   - [pynq/runtime/aes_gcm_dma.py](pynq/runtime/aes_gcm_dma.py)
 - Supported crypto modes:
@@ -190,7 +191,7 @@ More details:
 ## Next Engineering Steps
 
 1. Use the PS C shim as the primary transport baseline and re-run controlled FPS sweeps to quantify improvement over Python runtime.
-2. Replace `ring_stub.c` with a real descriptor-ring backend and move TX/RX buffers to ring-owned memory.
+2. Adapt the mmap ring prototype to the board-native `/dev` or UIO backend and complete descriptor ownership integration with PL.
 3. Integrate PS ring ownership transitions with PL producer/consumer logic and expose hardware counters.
 4. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
 5. Re-run U10/U15 acceptance gates on the C-shim + PL-first path.

@@ -1,6 +1,7 @@
 #ifndef OS_VIDEOSDR_RING_API_H
 #define OS_VIDEOSDR_RING_API_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct {
@@ -21,9 +22,20 @@ typedef struct {
     int fd;
     int is_tx;
     const char *dev_path;
+    void *map_base;
+    void *slot_base;
+    uint8_t *payload_base;
+    volatile uint32_t *write_index;
+    volatile uint32_t *read_index;
+    size_t map_len;
+    uint32_t slot_count;
+    uint32_t slot_payload_bytes;
+    uint32_t timeout_ms;
 } RingContext;
 
 int ring_open(RingContext *ctx, const char *dev_path, int is_tx);
+int ring_set_timeout_ms(RingContext *ctx, uint32_t timeout_ms);
+uint32_t ring_slot_payload_bytes(const RingContext *ctx);
 int ring_pop(RingContext *ctx, RingDescriptor *desc);
 int ring_push(RingContext *ctx, const RingDescriptor *desc);
 void ring_close(RingContext *ctx);

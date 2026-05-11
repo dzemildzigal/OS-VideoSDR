@@ -7,7 +7,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_executable(ps_shim
     src/main.c
-    src/ring_stub.c
+    src/ring_backend.c
 )
 
 target_include_directories(ps_shim PRIVATE include)

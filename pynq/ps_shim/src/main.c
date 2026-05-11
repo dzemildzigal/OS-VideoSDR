@@ -12,15 +12,24 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "ring_api.h"
+
 typedef enum {
     MODE_TX,
     MODE_RX,
 } RunMode;
 
+typedef enum {
+    BACKEND_SOCKET,
+    BACKEND_RING,
+} TransportBackend;
+
 typedef struct {
     RunMode mode;
+    TransportBackend transport_backend;
     const char *bind_ip;
     const char *target_ip;
+    const char *ring_dev_path;
     uint16_t port;
     uint32_t frames;
     uint32_t fps;
@@ -31,6 +40,7 @@ typedef struct {
     uint32_t recv_buffer_bytes;
     uint32_t max_runtime_s;
     uint32_t socket_timeout_ms;
+    uint32_t ring_timeout_ms;
     uint32_t print_interval_ms;
 } Options;
 
@@ -60,8 +70,10 @@ static void print_usage(const char *prog) {
     printf("Usage: %s --mode tx|rx [options]\n", prog);
     printf("Options:\n");
     printf("  --mode tx|rx\n");
+    printf("  --transport-backend socket|ring (default socket)\n");
     printf("  --bind-ip <ip>                (default 0.0.0.0)\n");
     printf("  --target-ip <ip>              (tx only, default 127.0.0.1)\n");
+    printf("  --ring-dev-path <path>        (ring backend path, default /dev/shm/osv_ring.bin)\n");
     printf("  --port <port>                 (default 5000)\n");
     printf("  --frames <n>                  (tx target frame count, default 0=until runtime)\n");
     printf("  --fps <n>                     (tx frame rate, default 1)\n");
@@ -72,6 +84,7 @@ static void print_usage(const char *prog) {
     printf("  --recv-buffer-bytes <n>       (default 8388608)\n");
     printf("  --max-runtime-s <n>           (default 30)\n");
     printf("  --socket-timeout-ms <n>       (default 250)\n");
+    printf("  --ring-timeout-ms <n>         (default 250)\n");
     printf("  --print-interval-ms <n>       (default 1000)\n");
 }
 
@@ -79,8 +92,10 @@ static Options parse_args(int argc, char **argv) {
     Options opt;
     bool mode_set = false;
     opt.mode = MODE_TX;
+    opt.transport_backend = BACKEND_SOCKET;
     opt.bind_ip = "0.0.0.0";
     opt.target_ip = "127.0.0.1";
+    opt.ring_dev_path = "/dev/shm/osv_ring.bin";
     opt.port = 5000;
     opt.frames = 0;
     opt.fps = 1;
@@ -91,6 +106,7 @@ static Options parse_args(int argc, char **argv) {
     opt.recv_buffer_bytes = 8U * 1024U * 1024U;
     opt.max_runtime_s = 30;
     opt.socket_timeout_ms = 250;
+    opt.ring_timeout_ms = 250;
     opt.print_interval_ms = 1000;
 
     for (int i = 1; i < argc; ++i) {
@@ -118,6 +134,22 @@ static Options parse_args(int argc, char **argv) {
             continue;
         }
 
+        if (strcmp(a, "--transport-backend") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--transport-backend requires value\n");
+                exit(2);
+            }
+            if (strcmp(argv[i], "socket") == 0) {
+                opt.transport_backend = BACKEND_SOCKET;
+            } else if (strcmp(argv[i], "ring") == 0) {
+                opt.transport_backend = BACKEND_RING;
+            } else {
+                fprintf(stderr, "unsupported transport backend: %s\n", argv[i]);
+                exit(2);
+            }
+            continue;
+        }
+
         if (strcmp(a, "--bind-ip") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "--bind-ip requires value\n");
@@ -133,6 +165,15 @@ static Options parse_args(int argc, char **argv) {
                 exit(2);
             }
             opt.target_ip = argv[i];
+            continue;
+        }
+
+        if (strcmp(a, "--ring-dev-path") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--ring-dev-path requires value\n");
+                exit(2);
+            }
+            opt.ring_dev_path = argv[i];
             continue;
         }
 
@@ -232,6 +273,15 @@ static Options parse_args(int argc, char **argv) {
             continue;
         }
 
+        if (strcmp(a, "--ring-timeout-ms") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--ring-timeout-ms requires value\n");
+                exit(2);
+            }
+            opt.ring_timeout_ms = parse_u32(argv[i], "ring-timeout-ms");
+            continue;
+        }
+
         if (strcmp(a, "--print-interval-ms") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "--print-interval-ms requires value\n");
@@ -263,6 +313,13 @@ static Options parse_args(int argc, char **argv) {
     }
 
     return opt;
+}
+
+static const char *backend_name(TransportBackend backend) {
+    if (backend == BACKEND_RING) {
+        return "ring";
+    }
+    return "socket";
 }
 
 static int make_socket(const Options *opt) {
@@ -312,38 +369,80 @@ static int bind_socket(int fd, const char *ip, uint16_t port) {
 }
 
 static int run_tx(const Options *opt) {
-    int fd = make_socket(opt);
-    if (fd < 0) {
-        return 1;
-    }
+    const bool use_ring = (opt->transport_backend == BACKEND_RING);
+    int fd = -1;
+    RingContext ring;
+    struct sockaddr_in target;
+    uint8_t *segment = 0;
+    uint32_t segment_count = 0;
 
-    if (strcmp(opt->bind_ip, "0.0.0.0") != 0) {
-        if (bind_socket(fd, opt->bind_ip, 0) != 0) {
+    memset(&ring, 0, sizeof(ring));
+    ring.fd = -1;
+    memset(&target, 0, sizeof(target));
+
+    if (use_ring) {
+        if (ring_open(&ring, opt->ring_dev_path, 1) != 0) {
+            perror("ring_open");
+            return 1;
+        }
+        if (ring_set_timeout_ms(&ring, opt->ring_timeout_ms) != 0) {
+            perror("ring_set_timeout_ms");
+            ring_close(&ring);
+            return 1;
+        }
+        if (opt->segment_bytes > ring_slot_payload_bytes(&ring)) {
+            fprintf(stderr,
+                    "segment-bytes (%u) exceeds ring slot payload (%u); increase OSV_RING_SLOT_PAYLOAD_BYTES\n",
+                    (unsigned)opt->segment_bytes,
+                    (unsigned)ring_slot_payload_bytes(&ring));
+            ring_close(&ring);
+            return 1;
+        }
+    } else {
+        fd = make_socket(opt);
+        if (fd < 0) {
+            return 1;
+        }
+
+        if (strcmp(opt->bind_ip, "0.0.0.0") != 0) {
+            if (bind_socket(fd, opt->bind_ip, 0) != 0) {
+                close(fd);
+                return 1;
+            }
+        }
+
+        target.sin_family = AF_INET;
+        target.sin_port = htons(opt->port);
+        if (inet_pton(AF_INET, opt->target_ip, &target.sin_addr) != 1) {
+            fprintf(stderr, "invalid target ip: %s\n", opt->target_ip);
             close(fd);
             return 1;
         }
     }
 
-    struct sockaddr_in target;
-    memset(&target, 0, sizeof(target));
-    target.sin_family = AF_INET;
-    target.sin_port = htons(opt->port);
-    if (inet_pton(AF_INET, opt->target_ip, &target.sin_addr) != 1) {
-        fprintf(stderr, "invalid target ip: %s\n", opt->target_ip);
-        close(fd);
-        return 1;
-    }
-
-    uint8_t *segment = (uint8_t *)malloc(opt->segment_bytes);
+    segment = (uint8_t *)malloc(opt->segment_bytes);
     if (segment == 0) {
         fprintf(stderr, "malloc failed for segment buffer\n");
-        close(fd);
+        if (use_ring) {
+            ring_close(&ring);
+        } else {
+            close(fd);
+        }
         return 1;
     }
     memset(segment, 0xA5, opt->segment_bytes);
 
-    const uint32_t segment_count =
-        (opt->frame_bytes + opt->segment_bytes - 1U) / opt->segment_bytes;
+    segment_count = (opt->frame_bytes + opt->segment_bytes - 1U) / opt->segment_bytes;
+    if (segment_count == 0 || segment_count > 0xFFFFU) {
+        fprintf(stderr, "segment count out of supported range: %u\n", (unsigned)segment_count);
+        free(segment);
+        if (use_ring) {
+            ring_close(&ring);
+        } else {
+            close(fd);
+        }
+        return 1;
+    }
 
     uint64_t started_ms = monotonic_ms();
     uint64_t started_us = monotonic_us();
@@ -358,13 +457,18 @@ static int run_tx(const Options *opt) {
         frame_period_us = 1;
     }
 
-    printf("ps_shim tx start: target=%s:%u fps=%u frame_bytes=%u segment_bytes=%u segments_per_frame=%u\n",
+    printf("ps_shim tx start: backend=%s target=%s:%u fps=%u frame_bytes=%u segment_bytes=%u segments_per_frame=%u",
+           backend_name(opt->transport_backend),
            opt->target_ip,
            (unsigned)opt->port,
            (unsigned)opt->fps,
            (unsigned)opt->frame_bytes,
            (unsigned)opt->segment_bytes,
            (unsigned)segment_count);
+    if (use_ring) {
+        printf(" ring_dev_path=%s", opt->ring_dev_path);
+    }
+    printf("\n");
 
     while (1) {
         uint64_t now_ms = monotonic_ms();
@@ -386,18 +490,38 @@ static int run_tx(const Options *opt) {
                 memcpy(segment + 12, &payload, sizeof(payload));
             }
 
-            ssize_t sent = sendto(
-                fd,
-                segment,
-                payload,
-                0,
-                (const struct sockaddr *)&target,
-                sizeof(target));
-            if (sent < 0) {
-                perror("sendto");
-                free(segment);
-                close(fd);
-                return 1;
+            ssize_t sent = 0;
+            if (use_ring) {
+                RingDescriptor desc;
+                memset(&desc, 0, sizeof(desc));
+                desc.buffer_addr = (uint64_t)(uintptr_t)segment;
+                desc.payload_len = payload;
+                desc.frame_id = frames_tx;
+                desc.segment_id = (uint16_t)seg;
+                desc.segment_count = (uint16_t)segment_count;
+                desc.timestamp_ns = monotonic_us() * 1000ULL;
+
+                if (ring_push(&ring, &desc) != 0) {
+                    perror("ring_push");
+                    free(segment);
+                    ring_close(&ring);
+                    return 1;
+                }
+                sent = (ssize_t)payload;
+            } else {
+                sent = sendto(
+                    fd,
+                    segment,
+                    payload,
+                    0,
+                    (const struct sockaddr *)&target,
+                    sizeof(target));
+                if (sent < 0) {
+                    perror("sendto");
+                    free(segment);
+                    close(fd);
+                    return 1;
+                }
             }
 
             packets_tx += 1ULL;
@@ -440,27 +564,51 @@ static int run_tx(const Options *opt) {
            elapsed_s);
 
     free(segment);
-    close(fd);
+    if (use_ring) {
+        ring_close(&ring);
+    } else {
+        close(fd);
+    }
     return 0;
 }
 
 static int run_rx(const Options *opt) {
-    int fd = make_socket(opt);
-    if (fd < 0) {
-        return 1;
-    }
-
-    if (bind_socket(fd, opt->bind_ip, opt->port) != 0) {
-        close(fd);
-        return 1;
-    }
-
+    const bool use_ring = (opt->transport_backend == BACKEND_RING);
+    int fd = -1;
+    RingContext ring;
+    uint8_t *buffer = 0;
     uint32_t max_datagram = opt->segment_bytes + 256U;
-    uint8_t *buffer = (uint8_t *)malloc(max_datagram);
-    if (buffer == 0) {
-        fprintf(stderr, "malloc failed for rx buffer\n");
-        close(fd);
-        return 1;
+
+    memset(&ring, 0, sizeof(ring));
+    ring.fd = -1;
+
+    if (use_ring) {
+        if (ring_open(&ring, opt->ring_dev_path, 0) != 0) {
+            perror("ring_open");
+            return 1;
+        }
+        if (ring_set_timeout_ms(&ring, opt->ring_timeout_ms) != 0) {
+            perror("ring_set_timeout_ms");
+            ring_close(&ring);
+            return 1;
+        }
+    } else {
+        fd = make_socket(opt);
+        if (fd < 0) {
+            return 1;
+        }
+
+        if (bind_socket(fd, opt->bind_ip, opt->port) != 0) {
+            close(fd);
+            return 1;
+        }
+
+        buffer = (uint8_t *)malloc(max_datagram);
+        if (buffer == 0) {
+            fprintf(stderr, "malloc failed for rx buffer\n");
+            close(fd);
+            return 1;
+        }
     }
 
     const uint64_t segments_per_frame =
@@ -471,12 +619,17 @@ static int run_rx(const Options *opt) {
     uint64_t packets_rx = 0;
     uint64_t bytes_rx = 0;
 
-    printf("ps_shim rx start: listen=%s:%u frame_bytes=%u segment_bytes=%u approx_segments_per_frame=%" PRIu64 "\n",
+    printf("ps_shim rx start: backend=%s listen=%s:%u frame_bytes=%u segment_bytes=%u approx_segments_per_frame=%" PRIu64,
+           backend_name(opt->transport_backend),
            opt->bind_ip,
            (unsigned)opt->port,
            (unsigned)opt->frame_bytes,
            (unsigned)opt->segment_bytes,
            segments_per_frame);
+    if (use_ring) {
+        printf(" ring_dev_path=%s", opt->ring_dev_path);
+    }
+    printf("\n");
 
     while (1) {
         uint64_t now_ms = monotonic_ms();
@@ -484,27 +637,63 @@ static int run_rx(const Options *opt) {
             break;
         }
 
-        ssize_t n = recvfrom(fd, buffer, max_datagram, 0, 0, 0);
-        if (n < 0) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                now_ms = monotonic_ms();
-                if ((now_ms - last_print_ms) >= opt->print_interval_ms) {
-                    double elapsed_s = (double)(now_ms - started_ms) / 1000.0;
-                    double mbps = elapsed_s > 0.0 ? ((double)bytes_rx * 8.0) / (elapsed_s * 1000000.0) : 0.0;
-                    uint64_t approx_frames = segments_per_frame > 0 ? packets_rx / segments_per_frame : 0;
-                    printf("ps_shim rx stats: approx_frames=%" PRIu64 " packets=%" PRIu64 " throughput_mbps=%.2f\n",
-                           approx_frames,
-                           packets_rx,
-                           mbps);
-                    last_print_ms = now_ms;
+        ssize_t n = -1;
+        if (use_ring) {
+            RingDescriptor desc;
+            if (ring_pop(&ring, &desc) != 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    now_ms = monotonic_ms();
+                    if ((now_ms - last_print_ms) >= opt->print_interval_ms) {
+                        double elapsed_s = (double)(now_ms - started_ms) / 1000.0;
+                        double mbps = elapsed_s > 0.0 ? ((double)bytes_rx * 8.0) / (elapsed_s * 1000000.0) : 0.0;
+                        uint64_t approx_frames = segments_per_frame > 0 ? packets_rx / segments_per_frame : 0;
+                        printf("ps_shim rx stats: approx_frames=%" PRIu64 " packets=%" PRIu64 " throughput_mbps=%.2f\n",
+                               approx_frames,
+                               packets_rx,
+                               mbps);
+                        last_print_ms = now_ms;
+                    }
+                    continue;
                 }
-                continue;
+
+                perror("ring_pop");
+                ring_close(&ring);
+                return 1;
             }
 
-            perror("recvfrom");
-            free(buffer);
-            close(fd);
-            return 1;
+            if (desc.payload_len > ring_slot_payload_bytes(&ring)) {
+                fprintf(stderr,
+                        "ring payload_len (%u) exceeds slot payload (%u)\n",
+                        (unsigned)desc.payload_len,
+                        (unsigned)ring_slot_payload_bytes(&ring));
+                ring_close(&ring);
+                return 1;
+            }
+
+            n = (ssize_t)desc.payload_len;
+        } else {
+            n = recvfrom(fd, buffer, max_datagram, 0, 0, 0);
+            if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    now_ms = monotonic_ms();
+                    if ((now_ms - last_print_ms) >= opt->print_interval_ms) {
+                        double elapsed_s = (double)(now_ms - started_ms) / 1000.0;
+                        double mbps = elapsed_s > 0.0 ? ((double)bytes_rx * 8.0) / (elapsed_s * 1000000.0) : 0.0;
+                        uint64_t approx_frames = segments_per_frame > 0 ? packets_rx / segments_per_frame : 0;
+                        printf("ps_shim rx stats: approx_frames=%" PRIu64 " packets=%" PRIu64 " throughput_mbps=%.2f\n",
+                               approx_frames,
+                               packets_rx,
+                               mbps);
+                        last_print_ms = now_ms;
+                    }
+                    continue;
+                }
+
+                perror("recvfrom");
+                free(buffer);
+                close(fd);
+                return 1;
+            }
         }
 
         packets_rx += 1ULL;
@@ -533,8 +722,14 @@ static int run_rx(const Options *opt) {
            mbps,
            elapsed_s);
 
-    free(buffer);
-    close(fd);
+    if (buffer != 0) {
+        free(buffer);
+    }
+    if (use_ring) {
+        ring_close(&ring);
+    } else {
+        close(fd);
+    }
     return 0;
 }
 
