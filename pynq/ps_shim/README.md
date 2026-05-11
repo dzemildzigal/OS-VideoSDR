@@ -68,6 +68,7 @@ Optional environment overrides:
 - `OSV_RING_UIO_MAP_INDEX` (default `0`, used when `--ring-dev-path` is `/dev/uioX`)
 - `OSV_RING_UIO_RING_OFFSET` (default `0`, byte offset inside mapped UIO map)
 - `OSV_RING_UIO_ALLOW_RESET` (default `0`; set to `1` only when `/dev/uioX` points to dedicated ring memory)
+- `OSV_RING_UIO_ALLOW_CLAMP` (default `0`; set to `1` only for debugging undersized UIO maps)
 - `OSV_RING_DEBUG` (default `0`, set `1` to print ring open diagnostics)
 
 Example:
@@ -94,6 +95,7 @@ export OSV_RING_UIO_RING_OFFSET=0
 
 - The backend now refuses to auto-initialize `/dev/uioX` mappings unless `OSV_RING_UIO_ALLOW_RESET=1` is set.
 - This prevents accidental writes across MMIO register apertures that are not dedicated ring memory.
+- The backend also fails fast when UIO map size is too small for requested ring layout unless `OSV_RING_UIO_ALLOW_CLAMP=1` is set.
 
 ## Next Integration Step
 

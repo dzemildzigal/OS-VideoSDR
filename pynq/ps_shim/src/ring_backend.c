@@ -214,6 +214,7 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     uint32_t uio_map_index = parse_env_u32("OSV_RING_UIO_MAP_INDEX", 0);
     uint32_t uio_ring_offset = parse_env_u32("OSV_RING_UIO_RING_OFFSET", 0);
     bool uio_allow_reset = parse_env_u32("OSV_RING_UIO_ALLOW_RESET", 0) > 0;
+    bool uio_allow_clamp = parse_env_u32("OSV_RING_UIO_ALLOW_CLAMP", 0) > 0;
     bool debug_enabled = parse_env_u32("OSV_RING_DEBUG", 0) > 0;
     struct stat st;
     RingHeader disk_header;
@@ -322,6 +323,23 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         size_t per_slot = sizeof(RingSlot) + (size_t)slot_payload_bytes;
         size_t max_slots = 0;
 
+        if (is_char_device && !uio_allow_clamp) {
+            fprintf(stderr,
+                    "ring_open: UIO map too small for requested ring layout on %s "
+                    "(available=%zu needed=%zu slot_count=%u slot_payload=%u). "
+                    "This usually indicates a non-ring MMIO region. "
+                    "Set OSV_RING_UIO_ALLOW_CLAMP=1 only for debugging.\n",
+                    dev_path,
+                    available_len,
+                    needed_len,
+                    (unsigned)slot_count,
+                    (unsigned)slot_payload_bytes);
+            munmap(map_base, map_len);
+            close(fd);
+            errno = ENOSPC;
+            return -1;
+        }
+
         if (available_len > sizeof(RingHeader) && per_slot > 0) {
             max_slots = (available_len - sizeof(RingHeader)) / per_slot;
         }
@@ -386,7 +404,8 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     if (debug_enabled) {
         fprintf(stderr,
                 "ring_open: dev=%s char=%d map_len=%zu map_index=%u ring_offset=%zu "
-                "slot_count=%u slot_payload=%u needed_len=%zu reset=%d uio_allow_reset=%d\n",
+                "slot_count=%u slot_payload=%u needed_len=%zu reset=%d "
+                "uio_allow_reset=%d uio_allow_clamp=%d\n",
                 dev_path,
                 is_char_device ? 1 : 0,
                 map_len,
@@ -396,7 +415,8 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
                 (unsigned)ctx->slot_payload_bytes,
                 needed_len,
                 should_reset_ring ? 1 : 0,
-                uio_allow_reset ? 1 : 0);
+                uio_allow_reset ? 1 : 0,
+                uio_allow_clamp ? 1 : 0);
     }
 
     return 0;
