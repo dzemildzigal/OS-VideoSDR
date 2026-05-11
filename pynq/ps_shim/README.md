@@ -67,6 +67,7 @@ Optional environment overrides:
 - `OSV_RING_TIMEOUT_MS` (default `250`)
 - `OSV_RING_UIO_MAP_INDEX` (default `0`, used when `--ring-dev-path` is `/dev/uioX`)
 - `OSV_RING_UIO_RING_OFFSET` (default `0`, byte offset inside mapped UIO map)
+- `OSV_RING_DEBUG` (default `0`, set `1` to print ring open diagnostics)
 
 Example:
 

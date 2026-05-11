@@ -213,6 +213,7 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     uint32_t slot_payload_bytes = parse_env_u32("OSV_RING_SLOT_PAYLOAD_BYTES", DEFAULT_SLOT_PAYLOAD_BYTES);
     uint32_t uio_map_index = parse_env_u32("OSV_RING_UIO_MAP_INDEX", 0);
     uint32_t uio_ring_offset = parse_env_u32("OSV_RING_UIO_RING_OFFSET", 0);
+    bool debug_enabled = parse_env_u32("OSV_RING_DEBUG", 0) > 0;
     struct stat st;
     RingHeader disk_header;
     RingHeader *header = 0;
@@ -222,6 +223,7 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
     size_t available_len = 0;
     size_t needed_len = 0;
     bool have_disk_header = false;
+    bool should_reset_ring = false;
     bool is_char_device = false;
     void *map_base = 0;
     int open_flags = O_RDWR;
@@ -338,8 +340,14 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         needed_len = ring_map_size(slot_count, slot_payload_bytes);
     }
 
-    if (!have_disk_header || !is_valid_header(header) || header->slot_count != slot_count ||
-        header->slot_payload_bytes != slot_payload_bytes) {
+    should_reset_ring = !is_valid_header(header) || header->slot_count != slot_count ||
+                        header->slot_payload_bytes != slot_payload_bytes;
+
+    if (!is_char_device && !have_disk_header) {
+        should_reset_ring = true;
+    }
+
+    if (should_reset_ring) {
         memset((void *)header, 0, needed_len);
         header->magic = RING_MAGIC;
         header->version = RING_VERSION;
@@ -362,6 +370,21 @@ int ring_open(RingContext *ctx, const char *dev_path, int is_tx) {
         (uint8_t *)ctx->slot_base + ((size_t)ctx->slot_count * sizeof(RingSlot));
     ctx->write_index = &header->write_index;
     ctx->read_index = &header->read_index;
+
+    if (debug_enabled) {
+        fprintf(stderr,
+                "ring_open: dev=%s char=%d map_len=%zu map_index=%u ring_offset=%zu "
+                "slot_count=%u slot_payload=%u needed_len=%zu reset=%d\n",
+                dev_path,
+                is_char_device ? 1 : 0,
+                map_len,
+                (unsigned)uio_map_index,
+                ring_offset,
+                (unsigned)ctx->slot_count,
+                (unsigned)ctx->slot_payload_bytes,
+                needed_len,
+                should_reset_ring ? 1 : 0);
+    }
 
     return 0;
 }
