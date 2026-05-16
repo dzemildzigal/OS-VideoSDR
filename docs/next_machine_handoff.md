@@ -64,29 +64,46 @@ Install commands:
 
 ## Quick Validation After Copy
 
-1. Run tests.
+1. Run integration tests.
 
-- python -m pytest -q
+```bash
+python -m pytest tests/integration/ -v
+```
 
-2. Verify entrypoints load.
+2. Verify unified entrypoints load.
 
-- python pynq/runtime/tx_main.py --help
-- python pynq/runtime/rx_main.py --help
+```bash
+python -m pynq.runtime.main --help
+python -m pc.runtime.main_rx --help
+```
 
-3. Build PS C shim baseline.
+3. Build PS C shim baseline (optional).
 
-- chmod +x pynq/ps_shim/build.sh
-- ./pynq/ps_shim/build.sh
+```bash
+chmod +x pynq/ps_shim/build.sh
+./pynq/ps_shim/build.sh
+```
 
-4. Optional local loopback dry run.
+4. Local loopback dry run (requires AES key in OSV_AES_KEY_HEX or --key-hex).
 
-Terminal A:
+Terminal A (PC RX side):
 
-- python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 30
+```bash
+export OSV_AES_KEY_HEX="000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F"
+python -m pc.runtime.main_rx --config-dir config --max-frames 10
+```
 
-Terminal B:
+Terminal B (PYNQ TX side, or localhost simulation):
 
-- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames 30 --fps 10
+```bash
+export OSV_AES_KEY_HEX="000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F"
+python -m pynq.runtime.main \
+  --config-dir config \
+  --source synthetic \
+  --crypto-mode aesgcm \
+  --frames 10 \
+  --fps 10
+```
 
 ## Immediate Work Queue
 
@@ -256,7 +273,8 @@ Decision from breakpoint sweep:
 Current implementation status:
 
 - `pynq/runtime/aes_gcm_dma.py` now contains overlay load and encrypt-path DMA plumbing.
-- `pynq/runtime/tx_main.py` and `pynq/runtime/rx_main.py` now accept `--crypto-mode dma`.
+- `pynq/runtime/main.py` now provides the unified PYNQ TX orchestrator.
+- `pc/runtime/main_rx.py` now provides the unified PC RX decrypt/display path.
 - RX DMA mode currently enforces decrypt-capable-overlay guard via `--dma-decrypt-supported`.
 - For this project stage, run TX DMA on PYNQ and decrypt on PC software path first.
 - DMA runtime validation is hardware-only and must be executed on a PYNQ target, not a host PC.
@@ -268,7 +286,7 @@ Current implementation status:
 	- Implement `load()` to bind overlay + DMA resources.
 	- Implement `encrypt()` and `decrypt()` with timeout/error mapping.
 	- Keep method signatures compatible with current TX/RX cipher call pattern.
-3. Wire DMA mode into `pynq/runtime/tx_main.py` and `pynq/runtime/rx_main.py`.
+3. Wire DMA mode into `pynq/runtime/main.py` and keep PC decrypt in `pc/runtime/main_rx.py`.
 	- Add runtime mode selection for DMA-backed crypto.
 	- Keep current software modes for fallback diagnostics.
 	- Use RX DMA mode only with a decrypt-capable bitstream; otherwise use software decrypt on RX for verification.
@@ -309,8 +327,8 @@ Run these commands on the PYNQ shell to restart quickly with logs and clear pass
 3. Overlay and runtime asset check.
 
 - find pynq/overlays -maxdepth 4 -type f \( -name "*.bit" -o -name "*.hwh" \) | tee "$RUN_DIR/02_overlays.txt"
-- python pynq/runtime/tx_main.py --help > "$RUN_DIR/03_tx_help.txt"
-- python pynq/runtime/rx_main.py --help > "$RUN_DIR/04_rx_help.txt"
+- python pynq/runtime/main.py --help > "$RUN_DIR/03_tx_help.txt"
+- python pc/runtime/main_rx.py --help > "$RUN_DIR/04_rx_help.txt"
 
 4. UDP drop counters before test.
 
@@ -318,9 +336,9 @@ Run these commands on the PYNQ shell to restart quickly with logs and clear pass
 
 5. Quick known-good software-path sanity (stable synthetic load).
 
-- timeout 30s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 120 --max-packets 12000 --max-idle-s 2 --max-runtime-s 30 --crypto-mode aesgcm --key-hex "$KEY_HEX" --recv-buffer-bytes 33554432 > "$RUN_DIR/06_rx_sw_sanity.txt" 2>&1 &
+- timeout 30s python pc/runtime/main_rx.py --bind-ip 127.0.0.1 --port 5000 --max-frames 120 --key-hex "$KEY_HEX" > "$RUN_DIR/06_rx_sw_sanity.txt" 2>&1 &
 - sleep 1
-- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames 120 --fps 15 --synthetic-frame-bytes 72000 --inter-packet-gap-us 100 --crypto-mode aesgcm --key-hex "$KEY_HEX" --send-buffer-bytes 33554432 > "$RUN_DIR/07_tx_sw_sanity.txt" 2>&1
+- python pynq/runtime/main.py --mode tx --target-ip 127.0.0.1 --target-port 5000 --frames 120 --fps 15 --frame-bytes 72000 --segment-bytes 1200 --crypto-mode aesgcm --key-hex "$KEY_HEX" > "$RUN_DIR/07_tx_sw_sanity.txt" 2>&1
 
 6. UDP drop counters after sanity.
 
@@ -328,9 +346,9 @@ Run these commands on the PYNQ shell to restart quickly with logs and clear pass
 
 7. DMA TX smoke with software RX verify (current encrypt-only overlay).
 
-- timeout 40s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames 180 --max-packets 18000 --max-idle-s 2 --max-runtime-s 40 --crypto-mode aesgcm --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/09_rx_sw_verify_for_dma_tx.txt" 2>&1 &
+- timeout 40s python pc/runtime/main_rx.py --bind-ip 127.0.0.1 --port 5000 --max-frames 180 --key-hex "$KEY_HEX" > "$RUN_DIR/09_rx_sw_verify_for_dma_tx.txt" 2>&1 &
 - sleep 1
-- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames 180 --fps 15 --synthetic-frame-bytes 120000 --inter-packet-gap-us 100 --crypto-mode dma --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/10_tx_dma_smoke.txt" 2>&1
+- python pynq/runtime/main.py --mode tx --target-ip 127.0.0.1 --target-port 5000 --frames 180 --fps 15 --frame-bytes 120000 --segment-bytes 1200 --crypto-mode dma --key-hex "$KEY_HEX" > "$RUN_DIR/10_tx_dma_smoke.txt" 2>&1
 - netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/11_udp_after_dma_tx_smoke.txt"
 
 8. What to check in logs before moving on.
@@ -373,46 +391,10 @@ Output location:
 
 - `artifacts/logs/<timestamp>_fullhd_fps_sweep/summary.txt`
 
-## Corrected Packet vs Frame Benchmark (Copy/Paste)
+## Benchmark Note
 
-Use this exact sequence on PYNQ to capture valid packet-vs-frame comparison with RX alive long enough.
-
-1. Setup.
-
-- cd /home/xilinx/jupyter_notebooks/OS-VideoSDR
-- export KEY_HEX=000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F
-- export FRAMES=300
-- export FPS=15
-- export FRAME_BYTES=120000
-- export IPG_US=100
-- export RUN_TS=$(date +%Y%m%d_%H%M%S)
-- export RUN_DIR=artifacts/logs/$RUN_TS
-- mkdir -p "$RUN_DIR"
-- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/00_udp_before.txt"
-
-2. Packet granularity run.
-
-- timeout 120s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames $FRAMES --max-runtime-s 120 --max-idle-s 30 --crypto-mode aesgcm --crypto-granularity packet --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/rx_dma_packet.txt" 2>&1 &
-- sleep 2
-- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames $FRAMES --fps $FPS --synthetic-frame-bytes $FRAME_BYTES --inter-packet-gap-us $IPG_US --crypto-mode dma --crypto-granularity packet --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/tx_dma_packet.txt" 2>&1
-- wait
-- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/01_udp_after_packet.txt"
-
-3. Frame granularity run.
-
-- timeout 120s python pynq/runtime/rx_main.py --bind-ip 127.0.0.1 --listen-port 5000 --max-frames $FRAMES --max-runtime-s 120 --max-idle-s 30 --crypto-mode aesgcm --crypto-granularity frame --key-hex "$KEY_HEX" --recv-buffer-bytes 67108864 > "$RUN_DIR/rx_dma_frame.txt" 2>&1 &
-- sleep 2
-- python pynq/runtime/tx_main.py --target-ip 127.0.0.1 --target-port 5000 --frames $FRAMES --fps $FPS --synthetic-frame-bytes $FRAME_BYTES --inter-packet-gap-us $IPG_US --crypto-mode dma --crypto-granularity frame --key-hex "$KEY_HEX" --send-buffer-bytes 67108864 > "$RUN_DIR/tx_dma_frame.txt" 2>&1
-- wait
-- netstat -su | grep -E "packet receive errors|receive buffer errors" | tee "$RUN_DIR/02_udp_after_frame.txt"
-
-4. Compare summary lines.
-
-- echo "=== PACKET MODE ==="
-- grep -E "TX done|TX dma done|RX done|throughput|drops=|decrypt_fail=|reorder=|latency_p95_ms=" "$RUN_DIR/tx_dma_packet.txt" "$RUN_DIR/rx_dma_packet.txt"
-- echo "=== FRAME MODE ==="
-- grep -E "TX done|TX dma done|RX done|throughput|drops=|decrypt_fail=|reorder=|latency_p95_ms=" "$RUN_DIR/tx_dma_frame.txt" "$RUN_DIR/rx_dma_frame.txt"
-- echo "Logs saved in $RUN_DIR"
+Legacy packet-vs-frame benchmark commands in this document previously used deleted split entrypoints.
+Use the unified commands above (`pynq/runtime/main.py` and `pc/runtime/main_rx.py`) for current validation runs.
 
 ## Definition of Done for Next Step
 

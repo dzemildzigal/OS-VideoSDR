@@ -57,6 +57,7 @@ class HdmiCapture:
     def __init__(self, config: HdmiCaptureConfig) -> None:
         self.config = config
         self._overlay = None
+        self._overlay_path: str | None = None
         self._hdmi_in = None
         self._started = False
         self._expected_frame_bytes = self.config.width * self.config.height * _pixel_bytes(
@@ -76,14 +77,26 @@ class HdmiCapture:
             raise RuntimeError("pynq package is required for HDMI capture runtime") from exc
 
         resolved = _resolve_overlay_path(self.config.bitstream_path)
-        if resolved:
+        if not resolved:
+            raise RuntimeError(
+                "HDMI capture requires a loaded HDMI-capable overlay in this revision; "
+                "provide bitstream_path/--bitstream to a .bit file with matching .hwh"
+            )
+
+        self._overlay_path = resolved
+        try:
             self._overlay = Overlay(resolved)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to load overlay '{resolved}'. Ensure the .bit exists and "
+                "the matching .hwh has the same basename"
+            ) from exc
 
         self._hdmi_in = self._locate_hdmi_in()
         if self._hdmi_in is None:
             raise RuntimeError(
-                "Unable to locate HDMI input object in loaded overlay; "
-                "expected overlay.video.hdmi_in or overlay.hdmi_in"
+                "Loaded overlay does not expose HDMI input; expected "
+                "overlay.video.hdmi_in or overlay.hdmi_in"
             )
 
     def _locate_hdmi_in(self):

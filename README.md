@@ -2,6 +2,17 @@
 
 Open source encrypted low-latency video transport development for PYNQ-Z2 and AntSDR.
 
+## Reset Notice (May 2026)
+
+This repository is now the single integration home for the video pipeline.
+
+V1 scope:
+- PYNQ: HDMI in -> AES encrypt in PL -> DDR DMA -> PS Ethernet sender
+- PC: UDP server -> AES decrypt in software -> OpenCV display
+
+Not in V1:
+- PYNQ HDMI out path (deferred until V1 gates pass)
+
 ## Mission
 
 Build an end-to-end encrypted live video link in three stages:
@@ -10,35 +21,35 @@ Build an end-to-end encrypted live video link in three stages:
 2. SDR transport on AntSDR E310 with the same packet and crypto contract.
 3. Frequency hopping after the non-hopping radio path is stable.
 
-## Current Status (2026-05-11)
+## Current Status
 
-- Protocol and runtime bring-up harnesses are implemented and tested.
-- Python runtime scripts are functional for validation and benchmarking:
-  - [pynq/runtime/tx_main.py](pynq/runtime/tx_main.py)
-  - [pynq/runtime/rx_main.py](pynq/runtime/rx_main.py)
-- PS C shim scaffold is available for lower-overhead transport bring-up:
+- Phase C-D implementation: unified runtime spine with config loader, nonce enforcement, and display integration.
+- Protocol contract is implemented and validated.
+- Unified runtime entrypoints ready for bring-up:
+  - **PYNQ TX:** [pynq/runtime/main.py](pynq/runtime/main.py) - synthesizes or captures HDMI, encrypts, sends UDP
+  - **PC RX:** [pc/runtime/main_rx.py](pc/runtime/main_rx.py) - receives UDP, decrypts, displays (OpenCV or headless)
+  - **Config:** [config_loader.py](config_loader.py) - unified YAML-based config for both sides (network.yaml, crypto.yaml)
+- Crypto modes supported:
+  - `none` (plaintext)
+  - `aesgcm` (software, always available on PC)
+  - `dma` (hardware adapter on PYNQ, requires bitstream)
+- Integration tests present:
+  - Roundtrip TX encrypt → RX decrypt validation
+  - Nonce monotonicity and replay window enforcement
+  - Frame reassembly integrity (in-order, out-of-order, multi-frame)
+- PS C shim scaffold available for lower-overhead transport backend:
   - [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
-- PS C shim now supports selectable `socket` and `ring` transport backends, with an mmap-backed ring prototype ready for board-native backend adaptation.
-- Hardware implementation kickoff artifacts are now present for PL/DT/UIO bring-up:
+  - Selectable `socket` and `ring` transport backends
+- Hardware implementation references:
   - [docs/pl_ring_uio_spec.md](docs/pl_ring_uio_spec.md)
   - [docs/templates/ring_uio_template.dtsi](docs/templates/ring_uio_template.dtsi)
   - [scripts/check_uio_ring_map.sh](scripts/check_uio_ring_map.sh)
-- DMA AES adapter is integrated in:
-  - [pynq/runtime/aes_gcm_dma.py](pynq/runtime/aes_gcm_dma.py)
-- Supported crypto modes:
-  - none
-  - aesgcm (software)
-  - dma (hardware adapter)
-- Supported crypto granularities:
-  - packet
-  - frame
-  - chunk
 
 Important architecture note:
 
-- Current Python scripts are bring-up tooling, not the final high-performance production datapath.
+- This repo owns integration orchestration end-to-end; AES core hardware ownership remains in AES-256-SystemVerilog.
 - Production direction remains PL-first datapath with PS as thin networking and control shim.
-- Full-HD FPS gate runs failed on Python PS runtime (`RX frames=0` with large UDP drop deltas), so active implementation focus has moved to PS C shim + PL ring integration.
+- Legacy split entrypoints are being removed in favor of one orchestrator per side.
 
 ## Simple Terms
 
@@ -215,18 +226,18 @@ More details:
 - [docs](docs): architecture decisions, protocol policy, handoff notes
 - [config](config): runtime settings
 - [protocol](protocol): shared packet schema and validation
-- [pynq/runtime](pynq/runtime): board-side bring-up runtime and DMA adapter
+- [pynq/runtime](pynq/runtime): board-side orchestrator, ingest, crypto adapter, transport
 - [pynq/ps_shim](pynq/ps_shim): PS-side C transport shim scaffold for PL-first migration
-- [pc](pc): host-side runtime tooling
+- [pc](pc): host-side runtime tooling (decrypt and display)
 - [tests](tests): unit and integration validation
 
 ## Next Engineering Steps
 
-1. Use the PS C shim as the primary transport baseline and re-run controlled FPS sweeps to quantify improvement over Python runtime.
-2. Adapt the mmap ring prototype to the board-native `/dev` or UIO backend and complete descriptor ownership integration with PL.
-3. Integrate PS ring ownership transitions with PL producer/consumer logic and expose hardware counters.
-4. Validate a decrypt-capable DMA overlay for true RX hardware DMA path.
-5. Re-run U10/U15 acceptance gates on the C-shim + PL-first path.
+1. Complete V1 pipeline: HDMI in on PYNQ to AES encrypt in PL to PS UDP sender.
+2. Complete PC receiver path: receive, decrypt, and display with OpenCV.
+3. Keep protocol and nonce policy unchanged while replacing legacy runtime entrypoints.
+4. Use PS C shim as optional performance backend after Python orchestrator parity is achieved.
+5. Defer HDMI out until V1 network pipeline gates are fully green.
 
 ## Source of Truth for Handover
 

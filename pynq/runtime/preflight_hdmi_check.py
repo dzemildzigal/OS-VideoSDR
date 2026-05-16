@@ -20,7 +20,11 @@ def log(msg: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="HDMI runtime preflight")
-    parser.add_argument("--bitstream", default="", help="Optional overlay bitstream path")
+    parser.add_argument(
+        "--bitstream",
+        default="",
+        help="HDMI-capable overlay bitstream path (.bit) with matching .hwh",
+    )
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--fps", type=int, default=10)
@@ -34,6 +38,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+
+    needs_hdmi_overlay = (not args.skip_capture) or (not args.skip_output)
+    if needs_hdmi_overlay and not args.bitstream:
+        raise ValueError(
+            "--bitstream is required for HDMI preflight in this revision. "
+            "Provide a .bit whose overlay exposes video.hdmi_in/video.hdmi_out (or hdmi_in/hdmi_out)."
+        )
 
     capture = None
     sink = None
