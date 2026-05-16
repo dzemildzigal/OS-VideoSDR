@@ -37,6 +37,27 @@ DEFAULT_NETWORK = {
     "recv_buffer_bytes": 8 * 1024 * 1024,
 }
 
+DEFAULT_PROFILES: Dict[str, Dict[str, Any]] = {
+    "U10": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 10,
+        "pixel_format": "RGB888",
+    },
+    "U15": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 15,
+        "pixel_format": "RGB888",
+    },
+    "C60": {
+        "width": 1920,
+        "height": 1080,
+        "fps": 60,
+        "pixel_format": "H264",
+    },
+}
+
 
 class _NullAead:
     def decrypt(self, _nonce: bytes, _aad: bytes, ciphertext: bytes, tag: bytes) -> bytes:
@@ -132,6 +153,23 @@ def _load_yaml_dict(path: Path) -> Dict[str, Any]:
         loaded = yaml.safe_load(handle)
 
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _load_profile(profile_name: str, profiles_path: Path) -> Dict[str, Any]:
+    merged = {k: dict(v) for k, v in DEFAULT_PROFILES.items()}
+    loaded = _load_yaml_dict(profiles_path)
+
+    loaded_profiles = loaded.get("profiles", {})
+    if isinstance(loaded_profiles, dict):
+        for name, cfg in loaded_profiles.items():
+            if isinstance(cfg, dict):
+                merged[name] = dict(cfg)
+
+    profile = merged.get(profile_name)
+    if profile is None:
+        raise ValueError(f"Unknown profile '{profile_name}'")
+
+    return profile
 
 
 def _load_network(network_path: Path) -> Dict[str, Any]:
@@ -249,6 +287,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-active-frames", type=int, default=16)
     parser.add_argument("--max-runtime-s", type=float, default=0.0)
     parser.add_argument("--max-idle-s", type=float, default=0.0)
+    parser.add_argument("--frame-sink", choices=["discard", "hdmi"], default="discard")
+    parser.add_argument("--hdmi-bitstream", default="")
 
     parser.add_argument("--crypto-mode", choices=["none", "aesgcm", "dma"], default="none")
     parser.add_argument(
@@ -281,6 +321,7 @@ def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
 
+    profile = _load_profile(args.profile, Path(args.profiles))
     network = _load_network(Path(args.network))
     bind_ip = args.bind_ip if args.bind_ip else str(network["bind_ip"])
     listen_port = args.listen_port if args.listen_port else int(network["rx_port"])
@@ -311,6 +352,28 @@ def main() -> int:
     bytes_received = 0
     bytes_since_print = 0
 
+    frame_sink = None
+    if args.frame_sink == "hdmi":
+        from hdmi_output import HdmiOutput, HdmiOutputConfig
+
+        sink_cfg = HdmiOutputConfig(
+            width=int(profile.get("width", 1920)),
+            height=int(profile.get("height", 1080)),
+            fps=int(profile.get("fps", 10)),
+            pixel_format=str(profile.get("pixel_format", "RGB888")),
+            bitstream_path=args.hdmi_bitstream or None,
+        )
+        frame_sink = HdmiOutput(sink_cfg)
+
+    def _render_frame(frame_data: bytes) -> None:
+        if frame_sink is None:
+            return
+        try:
+            frame_sink.render_frame(frame_data)
+            telemetry.frames_rendered += 1
+        except Exception:
+            telemetry.render_failures += 1
+
     rx = UdpRx(
         listen_port=listen_port,
         bind_ip=bind_ip,
@@ -331,6 +394,7 @@ def main() -> int:
     print(
         "RX start:",
         f"listen={bind_ip}:{listen_port}",
+        f"frame_sink={args.frame_sink}",
         f"crypto_mode={args.crypto_mode}",
         f"crypto_granularity={args.crypto_granularity}",
         f"crypto_chunk_bytes={crypto_chunk_bytes}",
@@ -363,6 +427,8 @@ def main() -> int:
                     print(
                         "RX stats:",
                         f"frames={telemetry.frames_completed}",
+                        f"rendered={telemetry.frames_rendered}",
+                        f"render_fail={telemetry.render_failures}",
                         f"packets={telemetry.packets_rx}",
                         f"drops={telemetry.packets_dropped}",
                         f"decrypt_fail={telemetry.decrypt_failures}",
@@ -415,6 +481,7 @@ def main() -> int:
                 maybe_frame = reassembler.push(header, plaintext)
                 if maybe_frame is not None:
                     telemetry.frames_completed += 1
+                    _render_frame(maybe_frame)
                     if header.source_timestamp_ns > 0:
                         end_to_end_ms = (time.time_ns() - header.source_timestamp_ns) / 1_000_000.0
                         latency_ms.append(end_to_end_ms)
@@ -491,6 +558,7 @@ def main() -> int:
                     continue
 
                 telemetry.frames_completed += 1
+                _render_frame(_plaintext)
                 source_ts = int(meta.get("source_timestamp_ns", 0))
                 if source_ts > 0:
                     end_to_end_ms = (time.time_ns() - source_ts) / 1_000_000.0
@@ -687,6 +755,7 @@ def main() -> int:
                 _plaintext = b"".join(plaintext_chunks)
 
                 telemetry.frames_completed += 1
+                _render_frame(_plaintext)
                 if source_ts > 0:
                     end_to_end_ms = (time.time_ns() - source_ts) / 1_000_000.0
                     latency_ms.append(end_to_end_ms)
@@ -702,6 +771,8 @@ def main() -> int:
                 print(
                     "RX stats:",
                     f"frames={telemetry.frames_completed}",
+                    f"rendered={telemetry.frames_rendered}",
+                    f"render_fail={telemetry.render_failures}",
                     f"packets={telemetry.packets_rx}",
                     f"drops={telemetry.packets_dropped}",
                     f"decrypt_fail={telemetry.decrypt_failures}",
@@ -718,6 +789,8 @@ def main() -> int:
         print("RX interrupted by user")
     finally:
         rx.close()
+        if frame_sink is not None:
+            frame_sink.close()
         close_fn = getattr(cipher, "close", None)
         if callable(close_fn):
             close_fn()
@@ -726,6 +799,8 @@ def main() -> int:
     print(
         "RX done:",
         f"frames={telemetry.frames_completed}",
+        f"rendered={telemetry.frames_rendered}",
+        f"render_fail={telemetry.render_failures}",
         f"packets={telemetry.packets_rx}",
         f"drops={telemetry.packets_dropped}",
         f"decrypt_fail={telemetry.decrypt_failures}",

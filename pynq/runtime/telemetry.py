@@ -13,7 +13,11 @@ class TelemetryCounters:
     packets_dropped: int = 0
     decrypt_failures: int = 0
     frames_completed: int = 0
+    frames_captured: int = 0
+    frames_rendered: int = 0
     frames_dropped_late: int = 0
+    capture_failures: int = 0
+    render_failures: int = 0
     reorder_events: int = 0
 
     def snapshot(self) -> Dict[str, int]:

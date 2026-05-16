@@ -19,6 +19,10 @@ Build an end-to-end encrypted live video link in three stages:
 - PS C shim scaffold is available for lower-overhead transport bring-up:
   - [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
 - PS C shim now supports selectable `socket` and `ring` transport backends, with an mmap-backed ring prototype ready for board-native backend adaptation.
+- Hardware implementation kickoff artifacts are now present for PL/DT/UIO bring-up:
+  - [docs/pl_ring_uio_spec.md](docs/pl_ring_uio_spec.md)
+  - [docs/templates/ring_uio_template.dtsi](docs/templates/ring_uio_template.dtsi)
+  - [scripts/check_uio_ring_map.sh](scripts/check_uio_ring_map.sh)
 - DMA AES adapter is integrated in:
   - [pynq/runtime/aes_gcm_dma.py](pynq/runtime/aes_gcm_dma.py)
 - Supported crypto modes:
@@ -90,6 +94,14 @@ UIO discovery on board:
 - `/dev/uio0`: `audio-codec-ctrl`
 - `/dev/uio1`: `fabric`
 - no dedicated ring-named device was present in `/dev`.
+
+UIO fail-fast validation (latest run):
+
+- `/dev/uio1` map0 size: `0x00010000` (64 KiB).
+- Requested ring layout (`slot_count=8192`, `slot_payload=4096`) requires `34078752` bytes.
+- Backend correctly returns `ENOSPC` with explicit message that UIO map is too small.
+- Conclusion: `/dev/uio1` is not a viable ring data-memory target for current profile.
+- Operational guidance: keep performance benchmarking on `/dev/shm/osv_ring.bin` until a dedicated ring-memory UIO mapping is provided by hardware/DT.
 
 ### Packet vs Frame DMA Granularity (Validated End-to-End)
 

@@ -13,6 +13,7 @@ Current goal:
 - `src/main.c`: runnable tx/rx baseline with selectable `socket` or `ring` transport backend.
 - `include/ring_api.h`: descriptor-ring API contract used for upcoming PL integration.
 - `src/ring_backend.c`: mmap-backed userspace ring implementation with descriptor ownership transitions.
+- `src/ping_pong_udp_tx_example.c`: phase-1 two-buffer DDR handoff template (PL producer, PS C UDP sender). Not compiled into the default `ps_shim` target yet.
 - `src/ring_stub.c`: legacy ENOSYS stub retained for reference.
 
 ## Build (On PYNQ Linux)
@@ -85,6 +86,44 @@ export OSV_RING_UIO_MAP_INDEX=0
 export OSV_RING_UIO_RING_OFFSET=0
 ./pynq/ps_shim/build/ps_shim --mode rx --transport-backend ring --ring-dev-path /dev/uio1 --max-runtime-s 20 --frame-bytes 120000 --segment-bytes 1200
 ```
+
+## Board-Native Bidirectional UIO Bring-Up (First Cut)
+
+Hardware target for bidirectional mode is one UIO node with:
+
+- map0: control registers
+- map1: PS->PL TX ring memory
+- map2: PL->PS RX ring memory
+
+Validate map sizing before run:
+
+```bash
+chmod +x scripts/check_uio_ring_map.sh
+./scripts/check_uio_ring_map.sh /dev/uioX 1 8192 4096
+./scripts/check_uio_ring_map.sh /dev/uioX 2 8192 4096
+```
+
+Terminal A (RX app consumes PL->PS ring on map2):
+
+```bash
+export OSV_RING_UIO_MAP_INDEX=2
+export OSV_RING_UIO_RING_OFFSET=0
+export OSV_RING_SLOT_COUNT=8192
+export OSV_RING_SLOT_PAYLOAD_BYTES=4096
+./pynq/ps_shim/build/ps_shim --mode rx --transport-backend ring --ring-dev-path /dev/uioX --max-runtime-s 22 --frame-bytes 120000 --segment-bytes 1200 --ring-timeout-ms 1000
+```
+
+Terminal B (TX app produces PS->PL ring on map1):
+
+```bash
+export OSV_RING_UIO_MAP_INDEX=1
+export OSV_RING_UIO_RING_OFFSET=0
+export OSV_RING_SLOT_COUNT=8192
+export OSV_RING_SLOT_PAYLOAD_BYTES=4096
+./pynq/ps_shim/build/ps_shim --mode tx --transport-backend ring --ring-dev-path /dev/uioX --max-runtime-s 20 --fps 500 --frame-bytes 120000 --segment-bytes 1200 --inter-packet-gap-us 0 --ring-timeout-ms 1000
+```
+
+If header initialization is required on a dedicated ring map, set `OSV_RING_UIO_ALLOW_RESET=1` once, then unset it for normal runs.
 
 ## Interrupt Expectations
 

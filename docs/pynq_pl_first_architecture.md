@@ -159,6 +159,26 @@ Suggested top-level map:
 7. Run U10 and U15 gates with PS C shim.
 8. Move to hardware H.264 phase after stable encrypted raw path.
 
+## Hardware Kickoff Artifacts (2026-05-11)
+
+Use these as the implementation starting point for board-native PL ring integration:
+
+- `docs/pl_ring_uio_spec.md`
+  - fixed software ring ABI assumptions
+  - map topology for bidirectional UIO bring-up
+  - control register proposal and IRQ behavior
+- `docs/templates/ring_uio_template.dtsi`
+  - DTS fragment template for one UIO node with control and ring maps
+- `scripts/check_uio_ring_map.sh`
+  - on-board preflight validation for map sizes against requested ring profile
+
+Recommended first hardware cut target:
+
+- map0 control aperture
+- map1 PS->PL TX ring aperture
+- map2 PL->PS RX ring aperture
+- one IRQ line for ring event signaling
+
 ## Risks and Mitigations
 
 - Risk: PS networking still too heavy under Linux.

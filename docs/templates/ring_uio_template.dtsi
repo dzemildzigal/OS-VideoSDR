@@ -1,0 +1,29 @@
+/*
+ * Template DTS fragment for OS-VideoSDR PL ring UIO device.
+ *
+ * Replace all placeholder addresses, sizes, and interrupt values
+ * with project-specific values from Vivado address allocation.
+ */
+
+/ {
+    osv_ring_uio@43c20000 {
+        compatible = "generic-uio";
+        status = "okay";
+
+        /*
+         * map0: control register aperture (AXI-Lite)
+         * map1: TX ring data aperture (DDR-backed)
+         * map2: RX ring data aperture (DDR-backed)
+         */
+        reg = <0x43c20000 0x00010000>,
+              <0x30000000 0x04000000>,
+              <0x34000000 0x04000000>;
+        reg-names = "ctrl", "tx_ring", "rx_ring";
+
+        interrupt-parent = <&intc>;
+        interrupts = <0 61 4>;
+
+        /* Optional: human-readable node label in sysfs name output. */
+        linux,uio-name = "osv-ring";
+    };
+};

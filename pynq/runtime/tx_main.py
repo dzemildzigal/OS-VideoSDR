@@ -275,7 +275,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--fps", type=int, default=None)
     parser.add_argument("--frames", type=int, default=0)
+    parser.add_argument("--frame-source", choices=["synthetic", "hdmi"], default="synthetic")
     parser.add_argument("--synthetic-frame-bytes", type=int, default=120_000)
+    parser.add_argument("--hdmi-bitstream", default="")
+    parser.add_argument("--hdmi-capture-timeout-s", type=float, default=2.0)
     parser.add_argument("--segment-bytes", type=int, default=None)
 
     parser.add_argument("--session-id", type=int, default=0)
@@ -334,6 +337,24 @@ def main() -> int:
     if frame_bytes <= 0:
         frame_bytes = _infer_raw_frame_bytes(profile)
 
+    capture = None
+    capture_frames: Optional[Iterator[bytes]] = None
+    if args.frame_source == "hdmi":
+        from hdmi_capture import HdmiCapture, HdmiCaptureConfig
+
+        capture_cfg = HdmiCaptureConfig(
+            width=int(profile.get("width", 1920)),
+            height=int(profile.get("height", 1080)),
+            fps=fps,
+            pixel_format=str(profile.get("pixel_format", "RGB888")),
+            bitstream_path=args.hdmi_bitstream or None,
+            frame_timeout_s=float(args.hdmi_capture_timeout_s),
+        )
+        capture = HdmiCapture(capture_cfg)
+        capture_frames = capture.frames()
+        # HDMI source uses profile-derived frame size expectations.
+        frame_bytes = _infer_raw_frame_bytes(profile)
+
     crypto_chunk_bytes = int(args.crypto_chunk_bytes)
     if crypto_chunk_bytes <= 0:
         raise ValueError("crypto-chunk-bytes must be > 0")
@@ -384,6 +405,7 @@ def main() -> int:
     print(
         "TX start:",
         f"profile={args.profile}",
+        f"frame_source={args.frame_source}",
         f"target={target_ip}:{target_port}",
         f"fps={fps}",
         f"frame_bytes={frame_bytes}",
@@ -396,7 +418,19 @@ def main() -> int:
 
     try:
         while args.frames <= 0 or frame_id < args.frames:
-            frame = _synthetic_frame(frame_id, frame_bytes)
+            if capture_frames is None:
+                frame = _synthetic_frame(frame_id, frame_bytes)
+            else:
+                try:
+                    frame = next(capture_frames)
+                    telemetry.frames_captured += 1
+                except StopIteration:
+                    print("TX capture source exhausted")
+                    break
+                except Exception as exc:
+                    telemetry.capture_failures += 1
+                    print(f"TX capture failure: {exc}")
+                    continue
             frame_timestamp_ns = time.time_ns()
             if args.crypto_granularity == "packet":
                 segments = list(_segment_payload(frame, segment_bytes))
@@ -517,6 +551,8 @@ def main() -> int:
                 print(
                     "TX stats:",
                     f"frames={telemetry.frames_completed}",
+                    f"captured={telemetry.frames_captured}",
+                    f"capture_fail={telemetry.capture_failures}",
                     f"packets={telemetry.packets_tx}",
                     f"throughput_mbps={mbps:.2f}",
                 )
@@ -543,6 +579,8 @@ def main() -> int:
         print("TX interrupted by user")
     finally:
         tx.close()
+        if capture is not None:
+            capture.close()
         close_fn = getattr(cipher, "close", None)
         if callable(close_fn):
             close_fn()
@@ -552,6 +590,8 @@ def main() -> int:
     print(
         "TX done:",
         f"frames={telemetry.frames_completed}",
+        f"captured={telemetry.frames_captured}",
+        f"capture_fail={telemetry.capture_failures}",
         f"packets={telemetry.packets_tx}",
         f"throughput_mbps={mbps:.2f}",
     )

@@ -21,6 +21,9 @@ Key docs:
 - docs/latency_budget.md
 - docs/test_plan.md
 - pynq/ps_shim/README.md
+- docs/pl_ring_uio_spec.md
+- docs/templates/ring_uio_template.dtsi
+- scripts/check_uio_ring_map.sh
 
 ## What To Copy
 
@@ -88,11 +91,12 @@ Terminal B:
 ## Immediate Work Queue
 
 1. Build and validate `pynq/ps_shim/build/ps_shim` loopback baseline on PYNQ.
-2. Adapt `pynq/ps_shim/src/ring_backend.c` from mmap prototype to board-native ring backend (`/dev` or UIO path).
-3. Integrate TX ring ownership protocol between PL and PS.
-4. Implement RX ring ingestion from PS to PL.
-5. Hook hardware counters to AXI-Lite map.
-6. Run U10/U15 gate attempts on C-shim + PL-first path.
+2. Implement PL control + ring hardware using `docs/pl_ring_uio_spec.md` and expose one UIO node with map0 (ctrl), map1 (TX ring), map2 (RX ring).
+3. Apply DT fragment from `docs/templates/ring_uio_template.dtsi` with board-specific addresses and IRQ.
+4. Validate map sizes with `scripts/check_uio_ring_map.sh` for map1 and map2 before running ps_shim.
+5. Integrate TX and RX ring ownership protocol between PL and PS with IRQ signaling.
+6. Hook hardware counters to AXI-Lite map and verify IRQ status/ack behavior.
+7. Run U10/U15 gate attempts on C-shim + PL-first path.
 
 ## PS C Shim Quick Start (Copy/Paste)
 
@@ -169,10 +173,21 @@ UIO discovery on board:
 - No dedicated ring-named device found under `/dev`.
 - During current prototype runs, no ring-specific interrupt activity was observed.
 
+Follow-up validation (latest run):
+
+- `/dev/uio1` map0 size is `0x00010000` (64 KiB).
+- Requested ring layout (`slot_count=8192`, `slot_payload=4096`) needs `34078752` bytes.
+- Backend now fails fast with `ENOSPC` and message: UIO map too small for requested ring layout.
+- Conclusion: `/dev/uio1` is not a suitable data-plane ring memory target for current settings.
+- Action: use `/dev/shm/osv_ring.bin` for software-path benchmarking until a dedicated ring memory region is exposed via DT/UIO.
+
 Current backend status after this evidence:
 
 - `pynq/ps_shim/src/ring_backend.c` now supports mmap file path and `/dev/uioX` mapping path with env-selectable map index and ring offset.
 - It is still a polling transport prototype; board-native PL ownership and IRQ-backed flow remain open integration work.
+- Safety guardrails are active:
+	- char-device mappings are not auto-reset unless `OSV_RING_UIO_ALLOW_RESET=1` is set.
+	- undersized UIO maps fail fast unless `OSV_RING_UIO_ALLOW_CLAMP=1` is set for debug-only runs.
 
 ## Session Evidence (2026-05-10, DMA Granularity Benchmark)
 
