@@ -1,21 +1,23 @@
 param(
-    [string]$Profile = "U10",
-    [string]$Profiles = "config/profiles.yaml",
-    [string]$Network = "config/network.yaml",
-    [string]$Crypto = "config/crypto.yaml",
-    [string]$CryptoMode = "none"
+    [string]$ConfigDir = "config",
+    [int]$MaxFrames = 120,
+    [string]$DisplayMode = "headless",
+    [switch]$StrictNonce
 )
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "OS-VideoSDR wired RX launcher"
-Write-Host "Profile: $Profile"
-Write-Host "Profiles config: $Profiles"
-Write-Host "Network config: $Network"
-Write-Host "Crypto config: $Crypto"
-Write-Host "Crypto mode: $CryptoMode"
+Write-Host "Config dir: $ConfigDir"
+Write-Host "Max frames: $MaxFrames"
+Write-Host "Display mode: $DisplayMode"
 
-python pynq/runtime/rx_main.py --profile $Profile --profiles $Profiles --network $Network --crypto $Crypto --crypto-mode $CryptoMode @Args
+$strictArg = ""
+if ($StrictNonce.IsPresent) {
+    $strictArg = "--strict-nonce"
+}
+
+python -m pc.runtime.main_rx --config-dir $ConfigDir --max-frames $MaxFrames --display-mode $DisplayMode $strictArg @Args
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

@@ -18,6 +18,53 @@
 - Soak tests: 30-minute and multi-hour continuity.
 - Fault tests: packet drop, reorder, jitter stress.
 
+## V1 Hardening Matrix Execution
+
+Matrix definition:
+
+- `scripts/v1_hardening_matrix.json`
+
+Primary runner (PC side):
+
+- `scripts/run_v1_hardening_matrix.ps1`
+
+Required parameters:
+
+- `-PynqHost`: SSH target for board (for example `xilinx@192.168.0.50`)
+- `-PcTargetIp`: PC IP reachable by the board TX path
+
+Nominal mandatory row subset (fast sign-off precheck):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_v1_hardening_matrix.ps1 \
+	-PynqHost "xilinx@192.168.0.50" \
+	-PcTargetIp "192.168.0.36" \
+	-CaseIds M1,M2,M5
+```
+
+Full matrix without soak rows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_v1_hardening_matrix.ps1 \
+	-PynqHost "xilinx@192.168.0.50" \
+	-PcTargetIp "192.168.0.36"
+```
+
+Full matrix including soak rows (M8/M9):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_v1_hardening_matrix.ps1 \
+	-PynqHost "xilinx@192.168.0.50" \
+	-PcTargetIp "192.168.0.36" \
+	-IncludeSoak
+```
+
+Artifacts are written to:
+
+- `artifacts/metrics/v1_hardening/<timestamp>/`
+- One subdirectory per matrix case with TX and RX logs.
+- `summary.json`, `results.json`, and `results.csv` for pass/fail and metrics review.
+
 ## Required Evidence per Gate
 
 - Run configuration snapshot.

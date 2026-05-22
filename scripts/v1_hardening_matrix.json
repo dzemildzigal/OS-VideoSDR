@@ -1,0 +1,94 @@
+{
+  "cases": [
+    {
+      "id": "M1",
+      "description": "Nominal correctness",
+      "fps": 10,
+      "frameBytes": 120000,
+      "segmentBytes": 1200,
+      "maxFrames": 600,
+      "mandatory": true,
+      "type": "nominal"
+    },
+    {
+      "id": "M2",
+      "description": "Nominal throughput",
+      "fps": 15,
+      "frameBytes": 120000,
+      "segmentBytes": 1200,
+      "maxFrames": 900,
+      "mandatory": true,
+      "type": "nominal"
+    },
+    {
+      "id": "M3",
+      "description": "Segment sensitivity 1000",
+      "fps": 10,
+      "frameBytes": 120000,
+      "segmentBytes": 1000,
+      "maxFrames": 600,
+      "mandatory": false,
+      "type": "sensitivity"
+    },
+    {
+      "id": "M4",
+      "description": "Segment sensitivity 1400",
+      "fps": 10,
+      "frameBytes": 120000,
+      "segmentBytes": 1400,
+      "maxFrames": 600,
+      "mandatory": false,
+      "type": "sensitivity"
+    },
+    {
+      "id": "M5",
+      "description": "Payload scale up",
+      "fps": 10,
+      "frameBytes": 240000,
+      "segmentBytes": 1200,
+      "maxFrames": 300,
+      "mandatory": true,
+      "type": "sensitivity"
+    },
+    {
+      "id": "M6",
+      "description": "Payload scale down",
+      "fps": 15,
+      "frameBytes": 60000,
+      "segmentBytes": 1200,
+      "maxFrames": 900,
+      "mandatory": false,
+      "type": "sensitivity"
+    },
+    {
+      "id": "M7",
+      "description": "Stress exploratory",
+      "fps": 20,
+      "frameBytes": 120000,
+      "segmentBytes": 1200,
+      "maxFrames": 600,
+      "mandatory": false,
+      "type": "exploratory"
+    },
+    {
+      "id": "M8",
+      "description": "Soak 30m",
+      "fps": 10,
+      "frameBytes": 120000,
+      "segmentBytes": 1200,
+      "maxFrames": 18000,
+      "mandatory": true,
+      "type": "soak"
+    },
+    {
+      "id": "M9",
+      "description": "Soak 60m",
+      "fps": 10,
+      "frameBytes": 120000,
+      "segmentBytes": 1200,
+      "maxFrames": 36000,
+      "mandatory": true,
+      "type": "soak"
+    }
+  ]
+}
