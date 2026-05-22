@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import importlib
 from pathlib import Path
+import sys
 import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
@@ -98,6 +99,43 @@ def _resolve_path(value: str) -> Path:
     return (project_root / candidate).resolve()
 
 
+def _import_board_pynq() -> Any:
+    """Import the installed board pynq package (Overlay/allocate), not repo-local shadow."""
+    pynq_mod = importlib.import_module("pynq")
+    if hasattr(pynq_mod, "Overlay") and hasattr(pynq_mod, "allocate"):
+        return pynq_mod
+
+    # Recover from shadowing by local OS-VideoSDR/pynq package.
+    project_root = Path(__file__).resolve().parents[2]
+    shadow_paths = {
+        str(project_root.resolve()),
+        str((project_root / "pynq").resolve()),
+    }
+
+    def _norm_path(value: str) -> str:
+        try:
+            return str(Path(value if value else ".").resolve())
+        except Exception:
+            return value
+
+    saved_sys_path = list(sys.path)
+    try:
+        sys.modules.pop("pynq", None)
+        sys.path = [p for p in sys.path if _norm_path(p) not in shadow_paths]
+        pynq_mod = importlib.import_module("pynq")
+    finally:
+        sys.path = saved_sys_path
+
+    if not hasattr(pynq_mod, "Overlay") or not hasattr(pynq_mod, "allocate"):
+        mod_file = getattr(pynq_mod, "__file__", "<unknown>")
+        raise RuntimeError(
+            "pynq package is present but missing Overlay/allocate; "
+            f"loaded module: {mod_file}"
+        )
+
+    return pynq_mod
+
+
 class AesGcmDmaEngine:
     def __init__(self, config: DmaCryptoConfig) -> None:
         self.config = config
@@ -130,12 +168,12 @@ class AesGcmDmaEngine:
             raise FileNotFoundError(f"DMA bitstream not found: {bitstream}")
 
         try:
-            pynq_mod = importlib.import_module("pynq")
+            pynq_mod = _import_board_pynq()
             Overlay = getattr(pynq_mod, "Overlay")
             allocate = getattr(pynq_mod, "allocate")
         except Exception as exc:
             raise RuntimeError(
-                "pynq package is required for --crypto-mode dma on board runtime"
+                "pynq package with Overlay support is required for --crypto-mode dma on board runtime"
             ) from exc
 
         self._overlay = Overlay(str(bitstream))
