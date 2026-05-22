@@ -134,10 +134,10 @@ def main() -> None:
             f"({len(args.key_hex)} hex chars). Use 64-char hex string."
         )
     
-    # Validate key_id from config
-    key_id = config.crypto.rx_to_tx_key_id
+    # Validate expected key_id for inbound TX->RX traffic.
+    key_id = config.crypto.tx_to_rx_key_id
     if not (0 < key_id < 256):
-        raise ValueError(f"Invalid rx_to_tx_key_id from config: {key_id}")
+        raise ValueError(f"Invalid tx_to_rx_key_id from config: {key_id}")
     
     # Initialize components
     crypto = AesGcmSoftware(key)
