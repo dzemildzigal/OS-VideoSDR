@@ -133,6 +133,14 @@ def parse_args() -> argparse.Namespace:
                        help="Synthetic frame size in bytes")
     parser.add_argument("--segment-bytes", type=int, default=1200,
                        help="Segment size for datagram payload")
+    parser.add_argument("--bind-ip", default=None,
+                       help="Optional bind IP override (defaults to network.yaml udp.bind_ip)")
+    parser.add_argument("--bind-port", type=int, default=None,
+                       help="Optional bind port override (defaults to network.yaml udp.rx_port)")
+    parser.add_argument("--target-ip", default=None,
+                       help="Optional TX target IP override (defaults to network.yaml udp.tx_ip)")
+    parser.add_argument("--target-port", type=int, default=None,
+                       help="Optional TX target UDP port override (defaults to network.yaml udp.tx_port)")
     parser.add_argument("--session-id", type=int, default=1,
                        help="Session ID in packet header")
     parser.add_argument("--stream-id", type=int, default=1,
@@ -179,12 +187,17 @@ def run_tx(args: argparse.Namespace, config: SessionConfig) -> None:
                 f"({len(args.key_hex)} hex chars). Use 64-char hex string."
             )
     
-    # Initialize transport with config
+    bind_ip = args.bind_ip if args.bind_ip is not None else config.network.bind_ip
+    bind_port = args.bind_port if args.bind_port is not None else config.network.rx_port
+    target_ip = args.target_ip if args.target_ip is not None else config.network.tx_ip
+    target_port = args.target_port if args.target_port is not None else config.network.tx_port
+
+    # Initialize transport with config and optional CLI overrides
     transport = UdpTransport(
-        bind_ip=config.network.bind_ip,
-        bind_port=config.network.rx_port,
-        send_ip=config.network.tx_ip,
-        send_port=config.network.tx_port,
+        bind_ip=bind_ip,
+        bind_port=bind_port,
+        send_ip=target_ip,
+        send_port=target_port,
     )
     
     # Initialize crypto with config
@@ -242,9 +255,9 @@ def run_tx(args: argparse.Namespace, config: SessionConfig) -> None:
     frame_interval_s = 1.0 / max(args.fps, 1)
     
     print(f"TX config: source={args.source} crypto={args.crypto_mode} "
-          f"frames={args.frames} fps={args.fps} key_id={key_id}")
-    print(f"Network: tx_ip={config.network.tx_ip}:{config.network.tx_port}")
-    
+        f"frames={args.frames} fps={args.fps} key_id={key_id}")
+    print(f"Network: bind={bind_ip}:{bind_port} tx={target_ip}:{target_port}")
+
     try:
         frame_id = 0
         
