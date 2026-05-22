@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--config-dir", default="config",
                        help="Config directory (default: ./config/)")
-    parser.add_argument("--key-hex", default=os.environ.get("OSV_AES_KEY_HEX", ""),
+    parser.add_argument("--key-hex", default=os.environ.get("OSV_AES_KEY_HEX", "000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F"),
                        help="AES-256 key (hex), or use OSV_AES_KEY_HEX env var")
     parser.add_argument("--max-frames", type=int, default=120,
                        help="Maximum frames to receive before exit")
