@@ -59,7 +59,14 @@ def _synthetic_frame(frame_bytes: int, frame_id: int) -> bytes:
     return bytes(((seed + i) & 0xFF) for i in range(frame_bytes))
 
 
-def _load_hdmi_source() -> Optional[object]:
+def _load_hdmi_source(
+    *,
+    width: int,
+    height: int,
+    fps: int,
+    pixel_format: str,
+    bitstream_path: str,
+) -> Optional[object]:
     """Load HDMI capture adapter for board runtime.
     
     Returns:
@@ -73,13 +80,13 @@ def _load_hdmi_source() -> Optional[object]:
     except ImportError:
         raise ImportError("hdmi_capture module not found; check pynq/runtime/hdmi_capture.py")
     
-    # V1 default: 1080p grayscale capture
+    # V2 baseline defaults can be overridden via CLI.
     cfg = HdmiCaptureConfig(
-        width=1920,
-        height=1080,
-        fps=30,
-        pixel_format="GRAY8",
-        bitstream_path="hdmi_capture_wrapper.bit"
+        width=width,
+        height=height,
+        fps=fps,
+        pixel_format=pixel_format,
+        bitstream_path=bitstream_path,
     )
     
     try:
@@ -133,6 +140,14 @@ def parse_args() -> argparse.Namespace:
                        help="Synthetic frame size in bytes")
     parser.add_argument("--segment-bytes", type=int, default=1200,
                        help="Segment size for datagram payload")
+    parser.add_argument("--hdmi-width", type=int, default=1920,
+                       help="HDMI capture width in pixels")
+    parser.add_argument("--hdmi-height", type=int, default=1080,
+                       help="HDMI capture height in pixels")
+    parser.add_argument("--hdmi-fps", type=int, default=None,
+                       help="HDMI capture FPS hint (defaults to --fps)")
+    parser.add_argument("--hdmi-pixel-format", default="GRAY8",
+                       help="HDMI pixel format hint (e.g., GRAY8, RGB888)")
     parser.add_argument("--bind-ip", default=None,
                        help="Optional bind IP override (defaults to network.yaml udp.bind_ip)")
     parser.add_argument("--bind-port", type=int, default=None,
@@ -162,7 +177,14 @@ def run_tx(args: argparse.Namespace, config: SessionConfig) -> None:
     """
     # Validate source selection
     if args.source == "hdmi":
-        hdmi_source = _load_hdmi_source()
+        hdmi_fps = args.hdmi_fps if args.hdmi_fps is not None else args.fps
+        hdmi_source = _load_hdmi_source(
+            width=args.hdmi_width,
+            height=args.hdmi_height,
+            fps=hdmi_fps,
+            pixel_format=args.hdmi_pixel_format,
+            bitstream_path=args.bitstream,
+        )
         if hdmi_source is None:
             raise NotImplementedError(
                 "HDMI ingest adapter not yet wired; use --source synthetic for V1 bring-up"
@@ -256,6 +278,13 @@ def run_tx(args: argparse.Namespace, config: SessionConfig) -> None:
     
     print(f"TX config: source={args.source} crypto={args.crypto_mode} "
         f"frames={args.frames} fps={args.fps} key_id={key_id}")
+    if args.source == "hdmi":
+        hdmi_fps = args.hdmi_fps if args.hdmi_fps is not None else args.fps
+        print(
+            "HDMI config: "
+            f"{args.hdmi_width}x{args.hdmi_height} "
+            f"fmt={args.hdmi_pixel_format} fps={hdmi_fps} bitstream={args.bitstream}"
+        )
     print(f"Network: bind={bind_ip}:{bind_port} tx={target_ip}:{target_port}")
 
     try:

@@ -1,0 +1,60 @@
+{
+  "cases": [
+    {
+      "id": "H1",
+      "description": "Baseline short run 1080p Gray8 @ 15 fps",
+      "source": "hdmi",
+      "pixelFormat": "GRAY8",
+      "width": 1920,
+      "height": 1080,
+      "fps": 15,
+      "segmentBytes": 1200,
+      "durationSeconds": 180,
+      "maxFrames": 2700,
+      "mandatory": true,
+      "type": "baseline"
+    },
+    {
+      "id": "H2",
+      "description": "Baseline soak 30m 1080p Gray8 @ 15 fps",
+      "source": "hdmi",
+      "pixelFormat": "GRAY8",
+      "width": 1920,
+      "height": 1080,
+      "fps": 15,
+      "segmentBytes": 1200,
+      "durationSeconds": 1800,
+      "maxFrames": 27000,
+      "mandatory": true,
+      "type": "soak"
+    },
+    {
+      "id": "H3",
+      "description": "Fallback check 1080p Gray8 @ 10 fps",
+      "source": "hdmi",
+      "pixelFormat": "GRAY8",
+      "width": 1920,
+      "height": 1080,
+      "fps": 10,
+      "segmentBytes": 1200,
+      "durationSeconds": 180,
+      "maxFrames": 1800,
+      "mandatory": false,
+      "type": "baseline"
+    },
+    {
+      "id": "H4",
+      "description": "Exploratory 1080p RGB888 @ 10 fps",
+      "source": "hdmi",
+      "pixelFormat": "RGB888",
+      "width": 1920,
+      "height": 1080,
+      "fps": 10,
+      "segmentBytes": 1200,
+      "durationSeconds": 120,
+      "maxFrames": 1200,
+      "mandatory": false,
+      "type": "exploratory"
+    }
+  ]
+}

@@ -65,6 +65,63 @@ Artifacts are written to:
 - One subdirectory per matrix case with TX and RX logs.
 - `summary.json`, `results.json`, and `results.csv` for pass/fail and metrics review.
 
+## V2 HDMI Baseline Execution
+
+Matrix definition:
+
+- `scripts/v2_hdmi_baseline_matrix.json`
+
+Primary runner (PC side):
+
+- `scripts/run_v2_hdmi_baseline.ps1`
+
+Required parameters:
+
+- `-PynqHost`: SSH target for board (for example `xilinx@192.168.0.50`)
+- `-PcTargetIp`: PC IP reachable by the board TX path
+
+Baseline short-run gate (H1 only):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_v2_hdmi_baseline.ps1 \
+	-PynqHost "xilinx@192.168.0.50" \
+	-PcTargetIp "192.168.0.36" \
+	-CaseIds H1 \
+	-SshKeyPath "$HOME/.ssh/id_ed25519" \
+	-SshKeyOnly
+```
+
+Baseline plus soak gate (H1 + H2):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_v2_hdmi_baseline.ps1 \
+	-PynqHost "xilinx@192.168.0.50" \
+	-PcTargetIp "192.168.0.36" \
+	-CaseIds H1,H2 \
+	-IncludeSoak \
+	-SshKeyPath "$HOME/.ssh/id_ed25519" \
+	-SshKeyOnly
+```
+
+Exploratory expansion rows (adds H3/H4):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run_v2_hdmi_baseline.ps1 \
+	-PynqHost "xilinx@192.168.0.50" \
+	-PcTargetIp "192.168.0.36" \
+	-IncludeSoak \
+	-IncludeExploratory \
+	-SshKeyPath "$HOME/.ssh/id_ed25519" \
+	-SshKeyOnly
+```
+
+V2 artifacts are written to:
+
+- `artifacts/metrics/v2_hdmi_baseline/<timestamp>/`
+- One subdirectory per matrix case with TX and RX logs.
+- `preflight.out.log` and `preflight.err.log` from board-side HDMI preflight.
+- `summary.json`, `results.json`, and `results.csv`.
+
 ## Required Evidence per Gate
 
 - Run configuration snapshot.
