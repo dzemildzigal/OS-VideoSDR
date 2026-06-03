@@ -1,0 +1,24 @@
+Warning: Identity file C:\Users\dzemi.ssh\id_ed25519 not accessible: No such file or directory.
+Traceback (most recent call last):
+  File "/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/runtime/hdmi_capture.py", line 126, in __init__
+    self._overlay = Overlay(resolved)
+  File "/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq/overlay.py", line 318, in __init__
+    super().__init__(bitfile_name, dtbo, partial=False, device=device)
+  File "/usr/local/share/pynq-venv/lib/python3.10/site-packages/pynq/bitstream.py", line 118, in __init__
+    raise IOError("Bitstream file {} does not exist.".format(bitfile_name))
+OSError: Bitstream file /home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/hdmi_capture_wrapper.bit does not exist.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/runtime/preflight_hdmi_check.py", line 110, in <module>
+    raise SystemExit(main())
+  File "/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/runtime/preflight_hdmi_check.py", line 58, in main
+    capture = HdmiCapture(
+  File "/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/runtime/hdmi_capture.py", line 128, in __init__
+    raise RuntimeError(
+RuntimeError: Failed to load overlay '/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/hdmi_capture_wrapper.bit'. Ensure the .bit exists and the matching .hwh has the same basename

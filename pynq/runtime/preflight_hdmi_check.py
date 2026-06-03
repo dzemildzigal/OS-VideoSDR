@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import argparse
 
-from hdmi_capture import HdmiCapture, HdmiCaptureConfig
-from hdmi_output import HdmiOutput, HdmiOutputConfig
+try:
+    from .hdmi_capture import HdmiCapture, HdmiCaptureConfig
+except ImportError:
+    from hdmi_capture import HdmiCapture, HdmiCaptureConfig
 
 
 def log(msg: str) -> None:
@@ -70,6 +72,17 @@ def main() -> int:
                 log(f"Capture frame {i + 1}/{args.frames}: {len(frame)} bytes")
 
         if not args.skip_output:
+            try:
+                try:
+                    from .hdmi_output import HdmiOutput, HdmiOutputConfig
+                except ImportError:
+                    from hdmi_output import HdmiOutput, HdmiOutputConfig
+            except Exception as exc:
+                raise RuntimeError(
+                    "HDMI output backend is unavailable; run with --skip-output "
+                    "or add pynq/runtime/hdmi_output.py"
+                ) from exc
+
             log("Preflight: opening HDMI output backend")
             sink = HdmiOutput(
                 HdmiOutputConfig(

@@ -7,7 +7,9 @@ by runtime entrypoints without binding to a single overlay layout.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import importlib
 from pathlib import Path
+import sys
 from typing import Iterator
 
 
@@ -43,6 +45,42 @@ def _pixel_bytes(pixel_format: str) -> int:
     return 1
 
 
+def _import_board_pynq_overlay():
+    """Import installed board pynq.Overlay, recovering from repo-local shadowing."""
+    pynq_mod = importlib.import_module("pynq")
+    if hasattr(pynq_mod, "Overlay"):
+        return getattr(pynq_mod, "Overlay")
+
+    project_root = Path(__file__).resolve().parents[2]
+    shadow_paths = {
+        str(project_root.resolve()),
+        str((project_root / "pynq").resolve()),
+    }
+
+    def _norm_path(value: str) -> str:
+        try:
+            return str(Path(value if value else ".").resolve())
+        except Exception:
+            return value
+
+    saved_sys_path = list(sys.path)
+    try:
+        sys.modules.pop("pynq", None)
+        sys.path = [p for p in sys.path if _norm_path(p) not in shadow_paths]
+        pynq_mod = importlib.import_module("pynq")
+    finally:
+        sys.path = saved_sys_path
+
+    if not hasattr(pynq_mod, "Overlay"):
+        mod_file = getattr(pynq_mod, "__file__", "<unknown>")
+        raise RuntimeError(
+            "pynq package is present but missing Overlay; "
+            f"loaded module: {mod_file}"
+        )
+
+    return getattr(pynq_mod, "Overlay")
+
+
 @dataclass(slots=True)
 class HdmiCaptureConfig:
     width: int
@@ -72,7 +110,7 @@ class HdmiCapture:
             raise RuntimeError("numpy is required for HDMI capture runtime") from exc
 
         try:
-            from pynq import Overlay  # type: ignore
+            Overlay = _import_board_pynq_overlay()
         except Exception as exc:  # pragma: no cover - runtime environment dependent
             raise RuntimeError("pynq package is required for HDMI capture runtime") from exc
 

@@ -3,7 +3,7 @@ param(
     [string]$PynqHost,
     [string]$PynqRepoPath = "/home/xilinx/jupyter_notebooks/OS-VideoSDR",
     [string]$PynqPython = "python",
-    [string]$BitstreamPath = "/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/hdmi_capture_wrapper.bit",
+    [string]$BitstreamPath = "/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/overlays/tx/hdmi_aes_tx_wrapper.bit",
     [string]$PcTargetIp = "",
     [int]$TargetPort = 5000,
     [string]$AesKeyHex = "000102030405060708090A0B0C0D0E0F000102030405060708090A0B0C0D0E0F",
@@ -14,6 +14,7 @@ param(
     [switch]$IncludeSoak,
     [switch]$IncludeExploratory,
     [switch]$SkipPreflight,
+    [int]$PreflightTimeoutSeconds = 45,
     [string]$SshKeyPath = "",
     [switch]$SshKeyOnly,
     [string]$PynqSudoPassword = "xilinx",
@@ -37,6 +38,29 @@ function Get-BytesPerPixel {
         return 2
     }
     return 1
+}
+
+function Invoke-SshToFile {
+    param(
+        [string]$SshHost,
+        [string[]]$Options,
+        [string]$RemoteShell,
+        [string]$StdoutPath,
+        [string]$StderrPath
+    )
+
+    $argList = @()
+    $argList += $Options
+    $argList += $SshHost
+    $argList += $RemoteShell
+
+    $proc = Start-Process -FilePath "ssh" -ArgumentList $argList -PassThru -NoNewWindow -RedirectStandardOutput $StdoutPath -RedirectStandardError $StderrPath
+    $proc.WaitForExit()
+    $proc.Refresh()
+    if ($null -ne $proc.ExitCode) {
+        return [int]$proc.ExitCode
+    }
+    return 255
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -86,7 +110,26 @@ $sshOptions = @(
     "-o", "ServerAliveCountMax=2"
 )
 if ($SshKeyPath) {
+    if (-not (Test-Path $SshKeyPath)) {
+        throw "SshKeyPath does not exist: $SshKeyPath"
+    }
     $sshOptions += @("-i", $SshKeyPath)
+}
+
+if (-not $SkipPreflight.IsPresent) {
+    $bitstreamDir = [System.IO.Path]::GetDirectoryName($BitstreamPath).Replace("\\", "/")
+    $bitstreamBase = [System.IO.Path]::GetFileNameWithoutExtension($BitstreamPath)
+    $hwhPath = "$bitstreamDir/$bitstreamBase.hwh"
+
+    $artifactOut = Join-Path $runDir "artifact_check.out.log"
+    $artifactErr = Join-Path $runDir "artifact_check.err.log"
+    $artifactCmd = "test -f '$BitstreamPath' && test -f '$hwhPath'"
+    $artifactShell = "bash -lc '$artifactCmd'"
+
+    $artifactExit = Invoke-SshToFile -SshHost $PynqHost -Options $sshOptions -RemoteShell $artifactShell -StdoutPath $artifactOut -StderrPath $artifactErr
+    if ($artifactExit -ne 0) {
+        throw "Missing HDMI overlay artifacts on board. Required files: '$BitstreamPath' and '$hwhPath'. Build/copy them first, then rerun V2 script."
+    }
 }
 
 if (-not $SkipPreflight.IsPresent) {
@@ -94,7 +137,7 @@ if (-not $SkipPreflight.IsPresent) {
     $preCmd = @(
         "cd '$PynqRepoPath'",
         "export PYTHONPATH='$PynqRepoPath/pynq'",
-        "$PynqPython -m runtime.preflight_hdmi_check --bitstream '$BitstreamPath' --width $($pre.width) --height $($pre.height) --fps $($pre.fps) --pixel-format '$($pre.pixelFormat)' --frames 2 --skip-output"
+        "timeout ${PreflightTimeoutSeconds}s $PynqPython -m runtime.preflight_hdmi_check --bitstream '$BitstreamPath' --width $($pre.width) --height $($pre.height) --fps $($pre.fps) --pixel-format '$($pre.pixelFormat)' --frames 2 --skip-output"
     ) -join " && "
 
     $preShell = "echo '$PynqSudoPassword' | sudo -S -p '' bash -lc '$preCmd'"
@@ -105,9 +148,24 @@ if (-not $SkipPreflight.IsPresent) {
     Write-Host "=== Running HDMI preflight ==="
     Write-Host "Preflight command: $preCmd"
 
-    & ssh @sshOptions $PynqHost $preShell 1> $preOut 2> $preErr
-    if ($LASTEXITCODE -ne 0) {
-        throw "HDMI preflight failed (exit=$LASTEXITCODE). Check $preOut and $preErr"
+    $preExit = Invoke-SshToFile -SshHost $PynqHost -Options $sshOptions -RemoteShell $preShell -StdoutPath $preOut -StderrPath $preErr
+    if ($preExit -ne 0) {
+        $preErrText = ""
+        if (Test-Path $preErr) {
+            $preErrText = Get-Content -Raw -Path $preErr
+        }
+
+        if ($preErrText -match "Bitstream file .* does not exist") {
+            throw "HDMI preflight failed: bitstream not found on board at '$BitstreamPath'. Build/copy HDMI overlay (.bit + .hwh), or pass -BitstreamPath to the correct file. See $preErr"
+        }
+        if ($preExit -eq 124) {
+            throw "HDMI preflight timed out after ${PreflightTimeoutSeconds}s (likely no active HDMI source/signal). Check $preOut and $preErr"
+        }
+        if ($preErrText) {
+            $tail = ($preErrText -split "`r?`n" | Select-Object -Last 8) -join "`n"
+            throw "HDMI preflight failed (exit=$preExit). Last stderr lines:`n$tail`nFull logs: $preOut and $preErr"
+        }
+        throw "HDMI preflight failed (exit=$preExit). Check $preOut and $preErr"
     }
 }
 
@@ -153,8 +211,7 @@ foreach ($case in $cases) {
 
     $remoteShellCmd = "echo '$PynqSudoPassword' | sudo -S -p '' bash -lc '$remoteCmd'"
 
-    & ssh @sshOptions $PynqHost $remoteShellCmd 1> $txOut 2> $txErr
-    $txExit = $LASTEXITCODE
+    $txExit = Invoke-SshToFile -SshHost $PynqHost -Options $sshOptions -RemoteShell $remoteShellCmd -StdoutPath $txOut -StderrPath $txErr
 
     $rxTimedOut = $false
     if (-not $rxProc.WaitForExit(120000)) {

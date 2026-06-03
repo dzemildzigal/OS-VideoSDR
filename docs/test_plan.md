@@ -75,6 +75,16 @@ Primary runner (PC side):
 
 - `scripts/run_v2_hdmi_baseline.ps1`
 
+Hard prerequisite before any V2 HDMI case:
+
+- Board must already have a valid HDMI-capable overlay pair with matching base names:
+	- `<name>.bit`
+	- `<name>.hwh`
+- The V2 runner default expects:
+	- `/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/overlays/tx/hdmi_aes_tx_wrapper.bit`
+	- `/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/overlays/tx/hdmi_aes_tx_wrapper.hwh`
+- If your filenames/paths differ, pass `-BitstreamPath` explicitly.
+
 Required parameters:
 
 - `-PynqHost`: SSH target for board (for example `xilinx@192.168.0.50`)
