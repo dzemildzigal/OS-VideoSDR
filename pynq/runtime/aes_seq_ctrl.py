@@ -140,12 +140,27 @@ class AesSeqController:
         nonce_hi = self.read(REG_NONCE_CUR_HI)
         nonce_lo = self.read(REG_NONCE_CUR_LO)
         nonce = (nonce_hi << 32) | nonce_lo
+        # REG_STATUS packs control bits and a compact mirror of AES status:
+        #   [12:0]  = aes_status[12:0]
+        #   [13]    = cfg_enable
+        #   [14]    = seq_busy
+        #   [15]    = key_dirty
+        #   [22:19] = aes_status[19:16]
+        aes_status = (status & 0x1FFF) | (((status >> 19) & 0xF) << 16)
         return {
             "status_raw": status,
-            "enabled": status & 0x1,
-            "seq_busy": (status >> 1) & 0x1,
-            "key_dirty": (status >> 2) & 0x1,
+            "enabled": (status >> 13) & 0x1,
+            "seq_busy": (status >> 14) & 0x1,
+            "key_dirty": (status >> 15) & 0x1,
             "nonce_counter": nonce,
+            "aes_status_raw": aes_status,
+            "aes_keys_ready": aes_status & 0xF,
+            "aes_session_ready": (aes_status >> 4) & 0x1,
+            "aes_aad_ready": (aes_status >> 5) & 0x1,
+            "aes_pt_ready": (aes_status >> 6) & 0x1,
+            "aes_busy": (aes_status >> 7) & 0x1,
+            "aes_h_valid": (aes_status >> 8) & 0x1,
+            "aes_stream_mode": (aes_status >> 17) & 0x1,
         }
 
 

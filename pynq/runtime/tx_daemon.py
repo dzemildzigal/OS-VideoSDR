@@ -243,7 +243,13 @@ def run(args: argparse.Namespace) -> None:
         seq.set_key_hex(args.key_hex)
         seq.request_key_load()
     seq.apply_nonce_seed()
-    print(f"[tx_daemon] Sequencer configured: {seq.read_status()}")
+    seq_status = seq.read_status()
+    print(
+        "[tx_daemon] Sequencer configured: "
+        f"raw=0x{seq_status['status_raw']:08X} "
+        f"enabled={seq_status['enabled']} busy={seq_status['seq_busy']} "
+        f"key_dirty={seq_status['key_dirty']} nonce={seq_status['nonce_counter']}"
+    )
 
     # --- Set up PingPong DDR writer ---
     if "frame_writer_0" not in overlay.ip_dict:
@@ -324,7 +330,11 @@ def run(args: argparse.Namespace) -> None:
                     seq_s = seq.read_status()
                     seq_str = (
                         f"raw=0x{seq_s['status_raw']:08X},busy={seq_s['seq_busy']},"
-                        f"kdirty={seq_s['key_dirty']},nonce={seq_s['nonce_counter']}"
+                        f"kdirty={seq_s['key_dirty']},nonce={seq_s['nonce_counter']},"
+                        f"aes_raw=0x{seq_s['aes_status_raw']:08X},"
+                        f"kready=0x{seq_s['aes_keys_ready']:X},sess={seq_s['aes_session_ready']},"
+                        f"pt={seq_s['aes_pt_ready']},busy={seq_s['aes_busy']},"
+                        f"h={seq_s['aes_h_valid']},strm={seq_s['aes_stream_mode']}"
                     )
                     print(
                         "[tx_daemon] idle "
