@@ -56,6 +56,9 @@ REG_WRITER_ERROR_COUNT= 0x0058
 REG_WRITER_CMD        = 0x005C   # RW1C [0] clear_fault [1] clear_error_count
 REG_WRITER_SRC_SEL    = 0x0060   # [0] 0=deterministic pattern  1=AXI-Stream
 
+# AXI AES-GCM stream register map (subset)
+AES_REG_STATUS        = 0x0004
+
 # AXI GPIO register map (xilinx.com:ip:axi_gpio:2.0)
 GPIO_DATA     = 0x00  # channel 1 data (used for hdmi_in_hpd)
 GPIO_TRI      = 0x04  # channel 1 tri-state (0=output)
@@ -168,6 +171,30 @@ class HdmiFrontEndGpio:
         return self.rd(GPIO2_DATA) & 0x1
 
 
+class AesCoreStatus:
+    """Read/format AXI_AES_GCM_Stream STATUS register."""
+
+    def __init__(self, mmio: Any) -> None:
+        self._m = mmio
+
+    def raw(self) -> int:
+        return int(self._m.read(AES_REG_STATUS)) & 0xFFFF_FFFF
+
+    def decode(self) -> dict:
+        v = self.raw()
+        return {
+            "raw": v,
+            "keys_ready": v & 0xF,
+            "session_ready": (v >> 4) & 0x1,
+            "aad_ready": (v >> 5) & 0x1,
+            "pt_ready": (v >> 6) & 0x1,
+            "busy": (v >> 7) & 0x1,
+            "h_valid": (v >> 8) & 0x1,
+            "stream_mode": (v >> 17) & 0x1,
+            "ct_fifo_overflow": (v >> 18) & 0x1,
+        }
+
+
 def send_buffer_udp(sock: socket.socket, dst: tuple, data: memoryview, frame_id: int) -> int:
     """Fragment *data* into UDP datagrams with a 6-byte header: [frame_id(4), seq(2)]."""
     sent_total = 0
@@ -238,6 +265,20 @@ def run(args: argparse.Namespace) -> None:
     else:
         print("[tx_daemon] WARNING: axi_gpio_hdmiin missing; cannot drive HPD or read lock.")
 
+    aes_dbg = None
+    if "aes_gcm_0" in overlay.ip_dict:
+        aes_info = overlay.ip_dict["aes_gcm_0"]
+        aes_dbg = AesCoreStatus(pynq.MMIO(aes_info["phys_addr"], aes_info["addr_range"]))
+        aes_s = aes_dbg.decode()
+        print(
+            "[tx_daemon] AES status "
+            f"raw=0x{aes_s['raw']:08X} keys_ready=0x{aes_s['keys_ready']:X} "
+            f"session_ready={aes_s['session_ready']} pt_ready={aes_s['pt_ready']} "
+            f"stream_mode={aes_s['stream_mode']} h_valid={aes_s['h_valid']}"
+        )
+    else:
+        print("[tx_daemon] WARNING: aes_gcm_0 missing; cannot read AES status.")
+
     buf_bytes = args.payload_bytes + 64   # payload + generous header margin
     buf0 = allocate(shape=(buf_bytes,), dtype=np.uint8)
     buf1 = allocate(shape=(buf_bytes,), dtype=np.uint8)
@@ -272,9 +313,18 @@ def run(args: argparse.Namespace) -> None:
                     lock_str = "n/a"
                     if hdmi_gpio is not None:
                         lock_str = str(hdmi_gpio.pixel_lock())
+                    aes_str = "n/a"
+                    if aes_dbg is not None:
+                        aes_s = aes_dbg.decode()
+                        aes_str = (
+                            f"raw=0x{aes_s['raw']:08X},k=0x{aes_s['keys_ready']:X},"
+                            f"sess={aes_s['session_ready']},pt={aes_s['pt_ready']},"
+                            f"strm={aes_s['stream_mode']},h={aes_s['h_valid']}"
+                        )
                     print(
                         "[tx_daemon] idle "
                         f"pixel_lock={lock_str} "
+                        f"aes={aes_str} "
                         f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
                         f"drops={drops_now}"
                     )
