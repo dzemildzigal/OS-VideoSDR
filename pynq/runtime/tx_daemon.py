@@ -321,9 +321,15 @@ def run(args: argparse.Namespace) -> None:
                             f"sess={aes_s['session_ready']},pt={aes_s['pt_ready']},"
                             f"strm={aes_s['stream_mode']},h={aes_s['h_valid']}"
                         )
+                    seq_s = seq.read_status()
+                    seq_str = (
+                        f"raw=0x{seq_s['status_raw']:08X},busy={seq_s['seq_busy']},"
+                        f"kdirty={seq_s['key_dirty']},nonce={seq_s['nonce_counter']}"
+                    )
                     print(
                         "[tx_daemon] idle "
                         f"pixel_lock={lock_str} "
+                        f"seq={seq_str} "
                         f"aes={aes_str} "
                         f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
                         f"drops={drops_now}"
