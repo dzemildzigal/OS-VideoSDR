@@ -56,6 +56,12 @@ REG_WRITER_ERROR_COUNT= 0x0058
 REG_WRITER_CMD        = 0x005C   # RW1C [0] clear_fault [1] clear_error_count
 REG_WRITER_SRC_SEL    = 0x0060   # [0] 0=deterministic pattern  1=AXI-Stream
 
+# AXI GPIO register map (xilinx.com:ip:axi_gpio:2.0)
+GPIO_DATA     = 0x00  # channel 1 data (used for hdmi_in_hpd)
+GPIO_TRI      = 0x04  # channel 1 tri-state (0=output)
+GPIO2_DATA    = 0x08  # channel 2 data (used for aPixelClkLckd input)
+GPIO2_TRI     = 0x0C  # channel 2 tri-state (1=input)
+
 UDP_MAX_PAYLOAD = 1400  # bytes per datagram – stay under typical MTU
 
 
@@ -139,6 +145,29 @@ class PingPongCtrl:
         return {"busy": ws & 0x1, "fault": (ws >> 1) & 0x1, "enabled": (ws >> 2) & 0x1}
 
 
+class HdmiFrontEndGpio:
+    """Minimal helper for axi_gpio_hdmiin: HPD output and lock input."""
+
+    def __init__(self, mmio: Any) -> None:
+        self._m = mmio
+
+    def wr(self, off: int, val: int) -> None:
+        self._m.write(off, int(val) & 0xFFFF_FFFF)
+
+    def rd(self, off: int) -> int:
+        return int(self._m.read(off)) & 0xFFFF_FFFF
+
+    def set_hpd(self, asserted: bool) -> None:
+        # Channel 1 is configured as output in BD, but enforce it anyway.
+        self.wr(GPIO_TRI, 0x0)
+        self.wr(GPIO_DATA, 0x1 if asserted else 0x0)
+
+    def pixel_lock(self) -> int:
+        # Channel 2 is configured as input and carries dvi2rgb_0/aPixelClkLckd.
+        self.wr(GPIO2_TRI, 0x1)
+        return self.rd(GPIO2_DATA) & 0x1
+
+
 def send_buffer_udp(sock: socket.socket, dst: tuple, data: memoryview, frame_id: int) -> int:
     """Fragment *data* into UDP datagrams with a 6-byte header: [frame_id(4), seq(2)]."""
     sent_total = 0
@@ -198,6 +227,17 @@ def run(args: argparse.Namespace) -> None:
     fw = PingPongCtrl(pynq.MMIO(fw_info["phys_addr"], fw_info["addr_range"]))
     fw.soft_reset()
 
+    hdmi_gpio = None
+    if "axi_gpio_hdmiin" in overlay.ip_dict:
+        gpio_info = overlay.ip_dict["axi_gpio_hdmiin"]
+        hdmi_gpio = HdmiFrontEndGpio(pynq.MMIO(gpio_info["phys_addr"], gpio_info["addr_range"]))
+        if args.force_hpd:
+            hdmi_gpio.set_hpd(True)
+            print("[tx_daemon] HDMI HPD asserted via axi_gpio_hdmiin.")
+        print(f"[tx_daemon] HDMI pixel lock={hdmi_gpio.pixel_lock()}")
+    else:
+        print("[tx_daemon] WARNING: axi_gpio_hdmiin missing; cannot drive HPD or read lock.")
+
     buf_bytes = args.payload_bytes + 64   # payload + generous header margin
     buf0 = allocate(shape=(buf_bytes,), dtype=np.uint8)
     buf1 = allocate(shape=(buf_bytes,), dtype=np.uint8)
@@ -229,8 +269,12 @@ def run(args: argparse.Namespace) -> None:
                 if args.status_interval > 0 and (now - last_status) >= args.status_interval:
                     ws = fw.writer_status()
                     drops_now = fw.rd(REG_DROP_COUNT)
+                    lock_str = "n/a"
+                    if hdmi_gpio is not None:
+                        lock_str = str(hdmi_gpio.pixel_lock())
                     print(
                         "[tx_daemon] idle "
+                        f"pixel_lock={lock_str} "
                         f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
                         f"drops={drops_now}"
                     )
@@ -303,6 +347,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--nonce-domain", type=lambda x: int(x, 0), default=1)
     p.add_argument("--nonce-seed",   type=lambda x: int(x, 0), default=1)
     p.add_argument("--payload-bytes",type=int, default=1200)
+    p.add_argument("--force-hpd", action="store_true", default=True,
+                   help="Assert HDMI HPD via axi_gpio_hdmiin (default: on)")
+    p.add_argument("--no-force-hpd", action="store_false", dest="force_hpd",
+                   help="Do not drive HDMI HPD from software")
     p.add_argument("--status-interval", type=float, default=1.0,
                    help="Seconds between idle status prints (0 disables)")
     p.add_argument("--idle-exit-s", type=float, default=0.0,
