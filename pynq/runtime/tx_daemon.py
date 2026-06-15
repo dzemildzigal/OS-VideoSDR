@@ -219,12 +219,34 @@ def run(args: argparse.Namespace) -> None:
     frames_sent = 0
     bytes_sent = 0
     drops_last = 0
+    idle_since = time.monotonic()
+    last_status = time.monotonic()
     try:
         while True:
             mask = fw.ready_mask()
             if mask == 0:
-                time.sleep(0.0001)
+                now = time.monotonic()
+                if args.status_interval > 0 and (now - last_status) >= args.status_interval:
+                    ws = fw.writer_status()
+                    drops_now = fw.rd(REG_DROP_COUNT)
+                    print(
+                        "[tx_daemon] idle "
+                        f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
+                        f"drops={drops_now}"
+                    )
+                    last_status = now
+
+                if args.idle_exit_s > 0 and (now - idle_since) >= args.idle_exit_s:
+                    print(
+                        "[tx_daemon] idle timeout reached "
+                        f"({args.idle_exit_s:.1f}s) with no ready buffers; exiting."
+                    )
+                    break
+
+                time.sleep(0.001)
                 continue
+
+            idle_since = time.monotonic()
 
             for buf_idx in range(2):
                 if not (mask & (1 << buf_idx)):
@@ -246,6 +268,7 @@ def run(args: argparse.Namespace) -> None:
 
                 frames_sent += 1
                 bytes_sent += sent
+                last_status = time.monotonic()
 
             # Periodic status every 100 frames
             if frames_sent > 0 and frames_sent % 100 == 0:
@@ -280,6 +303,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--nonce-domain", type=lambda x: int(x, 0), default=1)
     p.add_argument("--nonce-seed",   type=lambda x: int(x, 0), default=1)
     p.add_argument("--payload-bytes",type=int, default=1200)
+    p.add_argument("--status-interval", type=float, default=1.0,
+                   help="Seconds between idle status prints (0 disables)")
+    p.add_argument("--idle-exit-s", type=float, default=0.0,
+                   help="Exit after this many seconds with no ready buffers (0 disables)")
     return p.parse_args()
 
 
