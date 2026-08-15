@@ -1,8 +1,8 @@
 udp:
   bind_ip: 0.0.0.0
   tx_ip: 192.168.1.100
-  tx_port: 5000
-  rx_port: 5000
+  tx_port: 5600
+  rx_port: 5600  # must match tx_daemon.py --dst-port (default 5600)
   mtu_bytes: 1500
   max_payload_bytes: 1200
   recv_buffer_bytes: 8388608

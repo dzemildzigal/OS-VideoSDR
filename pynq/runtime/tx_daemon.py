@@ -65,8 +65,6 @@ GPIO_TRI      = 0x04  # channel 1 tri-state (0=output)
 GPIO2_DATA    = 0x08  # channel 2 data (used for aPixelClkLckd input)
 GPIO2_TRI     = 0x0C  # channel 2 tri-state (1=input)
 
-UDP_MAX_PAYLOAD = 1400  # bytes per datagram – stay under typical MTU
-
 
 def _load_pynq() -> Any:
     """Import the board pynq package, bypassing any local shadow named 'pynq'."""
@@ -195,20 +193,16 @@ class AesCoreStatus:
         }
 
 
-def send_buffer_udp(sock: socket.socket, dst: tuple, data: memoryview, frame_id: int) -> int:
-    """Fragment *data* into UDP datagrams with a 6-byte header: [frame_id(4), seq(2)]."""
-    sent_total = 0
-    offset = 0
-    seq = 0
-    length = len(data)
-    while offset < length:
-        chunk = data[offset: offset + UDP_MAX_PAYLOAD]
-        hdr = frame_id.to_bytes(4, "big") + seq.to_bytes(2, "big")
-        sock.sendto(hdr + bytes(chunk), dst)
-        sent_total += len(chunk)
-        offset += len(chunk)
-        seq += 1
-    return sent_total
+def send_packet_udp(sock: socket.socket, dst: tuple, data: memoryview) -> int:
+    """Send one already-complete OSV protocol packet (header+ciphertext+tag) as-is.
+
+    The PL packetizer + AES core already build a full OS-VideoSDR datagram in
+    DDR (40-byte header, ciphertext, 16-byte tag). No extra framing is needed;
+    do not re-fragment it, main_rx.py expects the raw datagram on the wire.
+    """
+    payload = bytes(data)
+    sock.sendto(payload, dst)
+    return len(payload)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -363,7 +357,6 @@ def run(args: argparse.Namespace) -> None:
                     continue
 
                 nbytes = fw.valid_bytes(buf_idx)
-                fid = fw.frame_id(buf_idx)
                 if nbytes == 0:
                     fw.mark_consumed(buf_idx)
                     continue
@@ -372,7 +365,7 @@ def run(args: argparse.Namespace) -> None:
                 buf = buf0 if buf_idx == 0 else buf1
                 buf.invalidate()
 
-                sent = send_buffer_udp(sock, dst, memoryview(buf)[:nbytes], fid)
+                sent = send_packet_udp(sock, dst, memoryview(buf)[:nbytes])
                 fw.clear_irq()
                 fw.mark_consumed(buf_idx)
 

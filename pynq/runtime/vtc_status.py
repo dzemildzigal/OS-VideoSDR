@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -63,7 +64,12 @@ DEFAULT_SNAPSHOT = Path(__file__).resolve().parents[2] / "artifacts" / "vtc_stat
 
 
 def read_all(mmio: Any) -> Dict[str, int]:
-    return {name: int(mmio.read(off)) & 0xFFFFFFFF for name, off in REGS.items()}
+    regs: Dict[str, int] = {}
+    for name, off in REGS.items():
+        print(f"[vtc_status] about to read {name} (offset 0x{off:03X})", flush=True)
+        regs[name] = int(mmio.read(off)) & 0xFFFFFFFF
+        print(f"[vtc_status] read {name} OK = 0x{regs[name]:08X}", flush=True)
+    return regs
 
 
 def _low13(v: int) -> int:
@@ -155,11 +161,14 @@ def main() -> None:
 
     print(f"[vtc_status] Loading overlay: {bit_path}")
     overlay = Overlay(str(bit_path))
+    print("[vtc_status] Overlay loaded OK.", flush=True)
 
     if "vtc_in" not in overlay.ip_dict:
         raise KeyError(f"vtc_in not found in overlay. Available: {list(overlay.ip_dict)}")
     vtc_info = overlay.ip_dict["vtc_in"]
+    print(f"[vtc_status] vtc_in phys_addr=0x{vtc_info['phys_addr']:08X} addr_range=0x{vtc_info['addr_range']:X}", flush=True)
     vtc = MMIO(vtc_info["phys_addr"], vtc_info["addr_range"])
+    print("[vtc_status] vtc_in MMIO mapped OK (mmap succeeded, no register read yet).", flush=True)
 
     pixel_lock = 0
     if "axi_gpio_hdmiin" in overlay.ip_dict:
@@ -167,6 +176,7 @@ def main() -> None:
         gpio = MMIO(gpio_info["phys_addr"], gpio_info["addr_range"])
         gpio.write(GPIO2_TRI, 0x1)
         pixel_lock = int(gpio.read(GPIO2_DATA)) & 0x1
+        print(f"[vtc_status] axi_gpio_hdmiin read OK, pixel_lock={pixel_lock}", flush=True)
     else:
         print("[vtc_status] WARNING: axi_gpio_hdmiin missing; pixel_lock unavailable.")
 
