@@ -149,6 +149,8 @@ def main() -> None:
     parser.add_argument("--bitstream", required=True, help="Path to .bit overlay file (same one tx_daemon uses)")
     parser.add_argument("--label", default=None, help="Tag for this snapshot (e.g. no_source, with_source_720p60)")
     parser.add_argument("--snapshot-file", default=str(DEFAULT_SNAPSHOT), help="Where to store/compare snapshots")
+    parser.add_argument("--force", action="store_true",
+                        help="Read vtc_in even if pixel_lock=0 (no HDMI clock). May crash the process (Bus error).")
     args = parser.parse_args()
 
     pynq = _load_pynq()
@@ -179,6 +181,15 @@ def main() -> None:
         print(f"[vtc_status] axi_gpio_hdmiin read OK, pixel_lock={pixel_lock}", flush=True)
     else:
         print("[vtc_status] WARNING: axi_gpio_hdmiin missing; pixel_lock unavailable.")
+
+    if pixel_lock == 0 and not args.force:
+        print()
+        print("[vtc_status] pixel_lock=0: no HDMI clock is present.")
+        print("[vtc_status] Reading vtc_in with no live pixel clock has caused a Bus error")
+        print("[vtc_status] (external abort) on this board before. Refusing to read vtc_in.")
+        print("[vtc_status] Plug in and power on a real HDMI source, then re-run.")
+        print("[vtc_status] Pass --force to attempt it anyway (may crash the process).")
+        return
 
     regs = read_all(vtc)
 
