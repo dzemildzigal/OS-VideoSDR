@@ -72,18 +72,15 @@ def read_all(mmio: Any) -> Dict[str, int]:
     return regs
 
 
-def _low13(v: int) -> int:
-    return v & 0x1FFF
-
-
 def heuristic_verdict(regs: Dict[str, int]) -> str:
-    h = _low13(regs["DET_HORIZ1"])
-    v = _low13(regs["DET_VERT1_F0"])
     if all(val == 0 for val in regs.values()):
         return "ALL ZERO - detector block looks unreset/unpowered or sees nothing."
-    if 64 <= h <= 4096 and 64 <= v <= 4096:
-        return f"HEURISTIC: plausible active size ~{h}x{v}. Compare against your real source resolution."
-    return f"HEURISTIC: decoded size {h}x{v} is not a plausible active video size."
+    return (
+        "Non-zero detector registers - VTC is decoding something. Do not trust a guessed "
+        "bit-field split here; instead compare DET_HORIZ1/DET_VERT1_F0/DET_VERT1_F1 raw "
+        "values against known CEA-861 TOTAL (active+blanking) line/pixel counts for your "
+        "test resolution, e.g. 720p60 = 1650 horizontal total x 750 vertical total."
+    )
 
 
 def load_snapshot(path: Path) -> Optional[dict]:
