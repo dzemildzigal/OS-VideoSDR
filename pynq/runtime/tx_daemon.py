@@ -330,11 +330,13 @@ def run(args: argparse.Namespace) -> None:
                         f"pt={seq_s['aes_pt_ready']},busy={seq_s['aes_busy']},"
                         f"h={seq_s['aes_h_valid']},strm={seq_s['aes_stream_mode']}"
                     )
+                    vid = seq.read_video_counters()
                     print(
                         "[tx_daemon] idle "
                         f"pixel_lock={lock_str} "
                         f"seq={seq_str} "
                         f"aes={aes_str} "
+                        f"beats={vid['video_beat_count']} sof={vid['video_frame_count']} "
                         f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
                         f"drops={drops_now}"
                     )

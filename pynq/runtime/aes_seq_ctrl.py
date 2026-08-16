@@ -31,6 +31,10 @@ REG_KEY6 = 0x38
 REG_KEY7 = 0x3C
 REG_NONCE_CUR_HI = 0x40
 REG_NONCE_CUR_LO = 0x44
+REG_VIDEO_BEAT_COUNT_HI = 0x48
+REG_VIDEO_BEAT_COUNT_LO = 0x4C
+REG_VIDEO_FRAME_COUNT_HI = 0x50
+REG_VIDEO_FRAME_COUNT_LO = 0x54
 
 CTRL_ENABLE = 1 << 0
 CTRL_LOAD_KEY_REQ = 1 << 1
@@ -161,6 +165,17 @@ class AesSeqController:
             "aes_busy": (aes_status >> 7) & 0x1,
             "aes_h_valid": (aes_status >> 8) & 0x1,
             "aes_stream_mode": (aes_status >> 17) & 0x1,
+        }
+
+
+    def read_video_counters(self) -> Dict[str, int]:
+        beat_hi = self.read(REG_VIDEO_BEAT_COUNT_HI)
+        beat_lo = self.read(REG_VIDEO_BEAT_COUNT_LO)
+        frame_hi = self.read(REG_VIDEO_FRAME_COUNT_HI)
+        frame_lo = self.read(REG_VIDEO_FRAME_COUNT_LO)
+        return {
+            "video_beat_count": (beat_hi << 32) | beat_lo,
+            "video_frame_count": (frame_hi << 32) | frame_lo,
         }
 
 
