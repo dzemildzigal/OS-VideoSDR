@@ -279,13 +279,14 @@ def run(args: argparse.Namespace) -> None:
     else:
         print("[tx_daemon] WARNING: aes_gcm_0 missing; cannot read AES status.")
 
-    # Each PL packet written to DDR is exactly: 40-byte OSV header +
-    # payload_bytes of ciphertext + 16-byte GCM tag. The ping-pong writer
-    # completes a buffer only when it receives EXACTLY this many bytes (its
-    # tlast with fewer bytes remaining faults and deadlocks the whole stream
-    # chain: AES blocked -> sequencer stuck -> packetizer frozen -> nonce never
-    # increments). So the buffer/frame size must equal the real packet size.
-    buf_bytes = args.payload_bytes + 40 + 16
+    # Each PL packet written to DDR is: 40-byte OSV header + payload_bytes of
+    # ciphertext. The AES core pads its final stream beat to 16 bytes (TKEEP is
+    # always 0xFFFF), so the writer receives 1248 bytes for 1240 real ones. Its
+    # frame-size config must therefore be <= 1248 and the tlast fault rule
+    # (tlast with remaining > beat size) makes cfg = header + payload = 1240
+    # the exact correct value; valid_bytes will report 1240 and the GCM tag
+    # (16 bytes) is appended by the daemon after reading it from the sequencer.
+    buf_bytes = args.payload_bytes + 40
     buf0 = allocate(shape=(buf_bytes,), dtype=np.uint8)
     buf1 = allocate(shape=(buf_bytes,), dtype=np.uint8)
     phys0 = buf0.physical_address
@@ -373,7 +374,17 @@ def run(args: argparse.Namespace) -> None:
                 buf = buf0 if buf_idx == 0 else buf1
                 buf.invalidate()
 
-                sent = send_packet_udp(sock, dst, memoryview(buf)[:nbytes])
+                # The AES core keeps the 16-byte GCM tag in registers (0x88-0x94),
+                # not in the streamed ciphertext. Wait for the sequencer to latch
+                # it for this packet, then append it to form the full OSV datagram
+                # (40 header + 1200 payload + 16 tag).
+                if not seq.wait_tag_ready(1.0):
+                    print("[tx_daemon] WARNING: tag not ready in time; dropping buffer")
+                    fw.mark_consumed(buf_idx)
+                    continue
+                tag = seq.read_tag()
+
+                sent = send_packet_udp(sock, dst, bytes(memoryview(buf)[:nbytes]) + tag)
                 fw.clear_irq()
                 fw.mark_consumed(buf_idx)
 

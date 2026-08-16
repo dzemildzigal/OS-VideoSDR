@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict
@@ -37,6 +38,11 @@ REG_VIDEO_FRAME_COUNT_HI = 0x50
 REG_VIDEO_FRAME_COUNT_LO = 0x54
 REG_PREFIFO_BEAT_HI = 0x58
 REG_PREFIFO_BEAT_LO = 0x5C
+REG_TAG0 = 0x60
+REG_TAG1 = 0x64
+REG_TAG2 = 0x68
+REG_TAG3 = 0x6C
+REG_TAG_VALID = 0x70
 
 CTRL_ENABLE = 1 << 0
 CTRL_LOAD_KEY_REQ = 1 << 1
@@ -182,6 +188,22 @@ class AesSeqController:
             "video_frame_count": (frame_hi << 32) | frame_lo,
             "prefifo_beats": (prefifo_hi << 32) | prefifo_lo,
         }
+
+
+    def read_tag(self) -> bytes:
+        tag = b""
+        for off in (REG_TAG0, REG_TAG1, REG_TAG2, REG_TAG3):
+            tag += self.read(off).to_bytes(4, "big")
+        return tag
+
+    def wait_tag_ready(self, timeout_s: float = 1.0) -> bool:
+        """Wait until the sequencer has latched the tag for the latest packet."""
+        deadline = time.time() + timeout_s
+        while time.time() < deadline:
+            if self.read(REG_TAG_VALID) & 0x1:
+                return True
+            time.sleep(0.001)
+        return False
 
 
 def _parse_args() -> argparse.Namespace:
