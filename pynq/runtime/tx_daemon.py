@@ -336,7 +336,7 @@ def run(args: argparse.Namespace) -> None:
                         f"pixel_lock={lock_str} "
                         f"seq={seq_str} "
                         f"aes={aes_str} "
-                        f"beats={vid['video_beat_count']} sof={vid['video_frame_count']} "
+                        f"beats={vid['video_beat_count']} sof={vid['video_frame_count']} prefifo={vid['prefifo_beats']} "
                         f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
                         f"drops={drops_now}"
                     )

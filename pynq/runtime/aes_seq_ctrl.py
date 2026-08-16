@@ -35,6 +35,8 @@ REG_VIDEO_BEAT_COUNT_HI = 0x48
 REG_VIDEO_BEAT_COUNT_LO = 0x4C
 REG_VIDEO_FRAME_COUNT_HI = 0x50
 REG_VIDEO_FRAME_COUNT_LO = 0x54
+REG_PREFIFO_BEAT_HI = 0x58
+REG_PREFIFO_BEAT_LO = 0x5C
 
 CTRL_ENABLE = 1 << 0
 CTRL_LOAD_KEY_REQ = 1 << 1
@@ -173,9 +175,12 @@ class AesSeqController:
         beat_lo = self.read(REG_VIDEO_BEAT_COUNT_LO)
         frame_hi = self.read(REG_VIDEO_FRAME_COUNT_HI)
         frame_lo = self.read(REG_VIDEO_FRAME_COUNT_LO)
+        prefifo_hi = self.read(REG_PREFIFO_BEAT_HI)
+        prefifo_lo = self.read(REG_PREFIFO_BEAT_LO)
         return {
             "video_beat_count": (beat_hi << 32) | beat_lo,
             "video_frame_count": (frame_hi << 32) | frame_lo,
+            "prefifo_beats": (prefifo_hi << 32) | prefifo_lo,
         }
 
 
