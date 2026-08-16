@@ -279,7 +279,13 @@ def run(args: argparse.Namespace) -> None:
     else:
         print("[tx_daemon] WARNING: aes_gcm_0 missing; cannot read AES status.")
 
-    buf_bytes = args.payload_bytes + 64   # payload + generous header margin
+    # Each PL packet written to DDR is exactly: 40-byte OSV header +
+    # payload_bytes of ciphertext + 16-byte GCM tag. The ping-pong writer
+    # completes a buffer only when it receives EXACTLY this many bytes (its
+    # tlast with fewer bytes remaining faults and deadlocks the whole stream
+    # chain: AES blocked -> sequencer stuck -> packetizer frozen -> nonce never
+    # increments). So the buffer/frame size must equal the real packet size.
+    buf_bytes = args.payload_bytes + 40 + 16
     buf0 = allocate(shape=(buf_bytes,), dtype=np.uint8)
     buf1 = allocate(shape=(buf_bytes,), dtype=np.uint8)
     phys0 = buf0.physical_address
