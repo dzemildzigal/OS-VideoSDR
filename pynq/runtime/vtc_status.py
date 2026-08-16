@@ -44,20 +44,19 @@ from typing import Any, Dict, Optional
 from tx_daemon import _load_pynq, GPIO2_DATA, GPIO2_TRI  # reuse, no 5th copy of this helper
 
 # ---------------------------------------------------------------------------
-# Xilinx Video Timing Controller (v_tc) register offsets - detector block.
+# Xilinx Video Timing Controller (v_tc) register offsets - DETECTOR block.
+# Offsets from xvtc_hw.h (Vitis 2024.1 driver); field packing verified against
+# xvtc.c GetDetector* implementations (low 16 = H, high 16 = V, totals+1).
 # ---------------------------------------------------------------------------
 REGS: Dict[str, int] = {
-    "CTRL": 0x000,
-    "ISR": 0x004,
-    "IER": 0x008,
-    "DET_STATUS": 0x060,
-    "DET_TIMEBASE": 0x064,
-    "DET_ENCODING": 0x068,
-    "DET_HORIZ1": 0x06C,
-    "DET_VERT1_F0": 0x070,
-    "DET_VERT1_F1": 0x074,
-    "DET_VSYNC_F0": 0x078,
-    "DET_VSYNC_F1": 0x07C,
+    "STAT": 0x004,      # bit0 = LOCKED, bit2 = active-video event (xvtc_hw.h masks)
+    "DASIZE": 0x020,    # active size: [31:16]=v_active, [15:0]=h_active
+    "DTSTAT": 0x024,    # detector timing status (raw)
+    "DFENC": 0x028,     # detected encoding
+    "DPOL": 0x02C,      # detected polarity
+    "DHSIZE": 0x030,    # h_total+1 in [15:0]
+    "DVSIZE": 0x034,    # v_total+1 in [15:0]
+    "DHSYNC": 0x038,    # hsync start
 }
 
 DEFAULT_SNAPSHOT = Path(__file__).resolve().parents[2] / "artifacts" / "vtc_status" / "last_snapshot.json"
@@ -75,12 +74,30 @@ def read_all(mmio: Any) -> Dict[str, int]:
 def heuristic_verdict(regs: Dict[str, int]) -> str:
     if all(val == 0 for val in regs.values()):
         return "ALL ZERO - detector block looks unreset/unpowered or sees nothing."
-    return (
-        "Non-zero detector registers - VTC is decoding something. Do not trust a guessed "
-        "bit-field split here; instead compare DET_HORIZ1/DET_VERT1_F0/DET_VERT1_F1 raw "
-        "values against known CEA-861 TOTAL (active+blanking) line/pixel counts for your "
-        "test resolution, e.g. 720p60 = 1650 horizontal total x 750 vertical total."
-    )
+    stat = regs["STAT"]
+    locked = stat & 0x1
+    avideo = (stat >> 2) & 0x1
+    h_active = regs["DASIZE"] & 0xFFFF
+    v_active = (regs["DASIZE"] >> 16) & 0xFFFF
+    h_total = (regs["DHSIZE"] & 0xFFFF) - 1
+    v_total = (regs["DVSIZE"] & 0xFFFF) - 1
+    lines = [
+        f"STAT: locked={locked} active_video_event={avideo} (raw=0x{stat:08X})",
+        f"Decoded: active={h_active}x{v_active} total={h_total}x{v_total}",
+    ]
+    if locked and avideo and 100 <= h_active <= 4096 and 100 <= v_active <= 4096:
+        lines.append(
+            "VTC sees LOCKED timing AND ACTIVE VIDEO with plausible active size - "
+            "the video input (vde) IS toggling."
+        )
+    elif locked and not avideo:
+        lines.append(
+            "VTC sees timing (locked) but NO ACTIVE VIDEO - vde is NOT toggling. "
+            "The source is not sending active video, or dvi2rgb is not decoding it."
+        )
+    else:
+        lines.append("VTC detector is not locked onto any video timing.")
+    return "\n".join(lines)
 
 
 def load_snapshot(path: Path) -> Optional[dict]:
