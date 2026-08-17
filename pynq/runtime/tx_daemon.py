@@ -424,7 +424,10 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--key-id",       type=int, default=1)
     p.add_argument("--nonce-domain", type=lambda x: int(x, 0), default=1)
     p.add_argument("--nonce-seed",   type=lambda x: int(x, 0), default=1)
-    p.add_argument("--payload-bytes",type=int, default=1200)
+    p.add_argument("--payload-bytes",type=int, default=1176,
+                   help="Packet payload bytes (default: 1176). Must make header+payload a "
+                        "multiple of 16: the AES stream input only accepts full 16-byte "
+                        "beats (pt_keep_ok = TKEEP==0xFFFF), so 40+payload must be %16==0.")
     p.add_argument("--force-hpd", action="store_true", default=True,
                    help="Assert HDMI HPD via axi_gpio_hdmiin (default: on)")
     p.add_argument("--no-force-hpd", action="store_false", dest="force_hpd",
