@@ -360,9 +360,24 @@ def run(args: argparse.Namespace) -> None:
 
             idle_since = time.monotonic()
 
+            # The PL encrypts header+payload together (AAD=0), so the wire
+            # format is: 8-byte cleartext nonce prefix + ciphertext(header+
+            # payload) + 16-byte tag. The packetizer's pacer makes the
+            # sequencer's nonce deterministic per buffered packet:
+            #   both buffers ready: buf0 = nonce-2, buf1 = nonce-1
+            #   one buffer ready:   that buffer = nonce-1
+            nonce_now = seq.nonce_counter()
+            both_ready = (mask & 0x3) == 0x3
+
             for buf_idx in range(2):
                 if not (mask & (1 << buf_idx)):
                     continue
+
+                if buf_idx == 0 and both_ready:
+                    nonce_pkt = nonce_now - 2
+                else:
+                    nonce_pkt = nonce_now - 1
+                prefix = nonce_pkt.to_bytes(8, "big")
 
                 nbytes = fw.valid_bytes(buf_idx)
                 if nbytes == 0:
@@ -373,9 +388,9 @@ def run(args: argparse.Namespace) -> None:
                 buf = buf0 if buf_idx == 0 else buf1
                 buf.invalidate()
 
-                # The buffer already contains the complete OSV datagram:
-                # header + ciphertext + tag (the AES streams the tag after CT).
-                sent = send_packet_udp(sock, dst, memoryview(buf)[:nbytes])
+                # Datagram = nonce prefix + complete encrypted packet from DDR
+                # (ciphertext of header+payload, then tag).
+                sent = send_packet_udp(sock, dst, prefix + bytes(memoryview(buf)[:nbytes]))
                 fw.clear_irq()
                 fw.mark_consumed(buf_idx)
 

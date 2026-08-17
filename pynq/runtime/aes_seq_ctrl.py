@@ -176,6 +176,11 @@ class AesSeqController:
         }
 
 
+    def nonce_counter(self) -> int:
+        hi = self.read(REG_NONCE_CUR_HI)
+        lo = self.read(REG_NONCE_CUR_LO)
+        return (hi << 32) | lo
+
     def read_video_counters(self) -> Dict[str, int]:
         beat_hi = self.read(REG_VIDEO_BEAT_COUNT_HI)
         beat_lo = self.read(REG_VIDEO_BEAT_COUNT_LO)

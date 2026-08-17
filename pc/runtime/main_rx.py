@@ -15,7 +15,7 @@ from typing import Dict, Optional
 
 import yaml
 
-from protocol.packet_schema import split_datagram, pack_header
+from protocol.packet_schema import split_datagram, pack_header, unpack_header
 from protocol.validation import validate_header, validate_nonce_monotonic, validate_replay_window
 
 # Ensure config_loader is accessible from both direct and module execution
@@ -164,12 +164,35 @@ def main() -> None:
                 print(f"RX timeout; incomplete={completed}/{args.max_frames}")
                 break
             
-            # Parse and validate header
-            try:
-                header, payload, tag = split_datagram(datagram)
-            except Exception as exc:
-                dropped += 1
-                continue
+            # PL packets: the PL encrypts header+payload together (AAD=0) and
+            # the TX daemon prepends an 8-byte cleartext nonce prefix. Detect by
+            # the missing OSV magic at offset 0, decrypt, then parse the header
+            # from the recovered plaintext and reuse the normal pipeline.
+            is_pl_format = len(datagram) >= 40 and datagram[0:2] != b"\x4f\x56"
+            if is_pl_format:
+                try:
+                    if len(datagram) < 8 + 16:
+                        raise ValueError("PL datagram too short")
+                    nonce_prefix = int.from_bytes(datagram[0:8], "big")
+                    pl_ct = datagram[8:-16]
+                    pl_tag = datagram[-16:]
+                    pl_plain = crypto.decrypt(_nonce(nonce_prefix), b"", pl_ct, pl_tag)
+                    if len(pl_plain) < 40:
+                        raise ValueError("decrypted plaintext too short")
+                    # Inner plaintext = OSV header + segment payload (no inner
+                    # tag; the outer GCM tag already authenticated everything).
+                    header = unpack_header(pl_plain[:40])
+                    payload = pl_plain[40:]
+                    tag = pl_tag
+                except Exception as exc:
+                    dropped += 1
+                    continue
+            else:
+                try:
+                    header, payload, tag = split_datagram(datagram)
+                except Exception as exc:
+                    dropped += 1
+                    continue
             
             errors = validate_header(header)
             if errors:
@@ -195,8 +218,15 @@ def main() -> None:
             
             # Decrypt
             try:
-                aad = pack_header(header)
-                plain = crypto.decrypt(_nonce(header.nonce_counter), aad, payload, tag)
+                if is_pl_format:
+                    # Already decrypted above; payload/tag from the recovered
+                    # plaintext are the authenticated segment + trailing tag of
+                    # the inner OSV packet (ignore the inner tag - the outer GCM
+                    # already verified).
+                    plain = payload
+                else:
+                    aad = pack_header(header)
+                    plain = crypto.decrypt(_nonce(header.nonce_counter), aad, payload, tag)
             except Exception as exc:
                 dropped += 1
                 print(f"RX decrypt failed: {exc}")
