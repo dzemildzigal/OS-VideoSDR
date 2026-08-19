@@ -98,3 +98,22 @@ Verified via:
 - GcmMode TB: PASS (but self-referential reference pipeline - shares the RTL).
 - EncryptPipelined TB (current RTL): FAILS in xsim only (part-select bug).
 - Wrapper-level KAT (tb_wrapper_stream.sv): reproduces the whole chain in sim.
+
+## FINAL RESOLUTION (verified on board 2nd fix)
+Root cause: GcmMode allowed PT to fire during sess_pending (before the GHASH
+session started). The first CT blocks emerged with ct_valid_i gated by
+sess_running=0 and were silently DROPPED from the GHASH -> tag over truncated
+ciphertext. CT on the wire stayed byte-correct (keystream verified) which made
+it deceptive. FIX: pt_base_ready = key_present && sess_running && gh_ct_ready
+(removed pt_path_pending). Verified in sim (immediate-stream worst case -> tag
+correct) and on board (10/10, then 50/50 RX frames, 100/100 OpenCV frames).
+
+Other changes:
+- EncryptionRound.sv: localparam KEY_BASE (xsim part-select quirk workaround;
+  logically identical, keeps sim == synth).
+- launch_h keys_ready==15 gate REVERTED (lockstep just-in-time is correct).
+
+KNOWN REMAINING ISSUE: intermittent InvalidTag on the wire (~rare, data-
+dependent). The GHASH GF-multiply path is timing-marginal (~9.8/10 ns at
+100 MHz). Deferred hardening: pipeline GFMult128 or drop AES-domain clock to
+50/75 MHz.
