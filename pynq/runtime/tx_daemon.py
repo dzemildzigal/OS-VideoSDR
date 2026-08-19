@@ -230,7 +230,10 @@ def run(args: argparse.Namespace) -> None:
         nonce_domain=args.nonce_domain,
         nonce_seed=args.nonce_seed,
         payload_bytes=args.payload_bytes,
-        enable=True,
+        # configure-only: leave the sequencer DISABLED; tx_shim enables it
+        # once it is draining, so the nonce counter cannot run ahead of the
+        # writer while nobody drains (that gap breaks the -1/-2 pairing).
+        enable=not args.configure_only,
     )
     seq.configure(cfg)
     if args.key_hex:
@@ -302,6 +305,17 @@ def run(args: argparse.Namespace) -> None:
     dst = (args.dst_host, args.dst_port)
     print(f"[tx_daemon] Sending UDP to {dst[0]}:{dst[1]}")
     print("[tx_daemon] Running. Ctrl-C to stop.")
+
+    if args.configure_only:
+        # Hold the overlay + buffers open so an external sender (tx_shim.c)
+        # can read the writer registers via /dev/mem and drain the buffers.
+        print(
+            f"[tx_daemon] configure-only mode: buffers held, no Python send loop. "
+            f"buf0=0x{phys0:08X} buf1=0x{phys1:08X} (sequencer DISABLED; tx_shim enables it)",
+            flush=True,
+        )
+        while True:
+            time.sleep(3600)
 
     frames_sent = 0
     bytes_sent = 0
@@ -442,6 +456,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Do not drive HDMI HPD from software")
     p.add_argument("--status-interval", type=float, default=1.0,
                    help="Seconds between idle status prints (0 disables)")
+    p.add_argument("--configure-only", action="store_true",
+                   help="Configure overlay/sequencer/writer, then wait for an external C sender (tx_shim)")
     p.add_argument("--idle-exit-s", type=float, default=0.0,
                    help="Exit after this many seconds with no ready buffers (0 disables)")
     return p.parse_args()
