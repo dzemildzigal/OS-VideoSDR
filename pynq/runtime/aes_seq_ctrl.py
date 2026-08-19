@@ -43,6 +43,10 @@ REG_TAG1 = 0x64
 REG_TAG2 = 0x68
 REG_TAG3 = 0x6C
 REG_TAG_VALID = 0x70
+REG_GHASH0 = 0x74
+REG_GHASH1 = 0x78
+REG_GHASH2 = 0x7C
+REG_GHASH3 = 0x80
 
 CTRL_ENABLE = 1 << 0
 CTRL_LOAD_KEY_REQ = 1 << 1
@@ -200,6 +204,13 @@ class AesSeqController:
         for off in (REG_TAG0, REG_TAG1, REG_TAG2, REG_TAG3):
             tag += self.read(off).to_bytes(4, "big")
         return tag
+
+    def read_ghash(self) -> bytes:
+        """Pre-mask GHASH accumulator for the latest packet (before tag_mask XOR)."""
+        gh = b""
+        for off in (REG_GHASH0, REG_GHASH1, REG_GHASH2, REG_GHASH3):
+            gh += self.read(off).to_bytes(4, "big")
+        return gh
 
     def wait_tag_ready(self, timeout_s: float = 1.0) -> bool:
         """Wait until the sequencer has latched the tag for the latest packet."""

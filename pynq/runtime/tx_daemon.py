@@ -403,9 +403,11 @@ def run(args: argparse.Namespace) -> None:
                 drops_now = fw.rd(REG_DROP_COUNT)
                 dropped = drops_now - drops_last
                 drops_last = drops_now
+                gh = seq.read_ghash().hex()
+                tg = seq.read_tag().hex()
                 print(
                     f"[tx_daemon] frames={frames_sent}  bytes={bytes_sent}"
-                    f"  drops_delta={dropped}"
+                    f"  drops_delta={dropped} ghash={gh} tag={tg}"
                 )
 
     except KeyboardInterrupt:
