@@ -218,6 +218,33 @@ def run(args: argparse.Namespace) -> None:
     overlay = Overlay(str(bit_path))
     print("[tx_daemon] Overlay loaded.")
 
+    # --- Select the design-domain clock frequency (50/75/100 MHz) ---
+    # The PL derives the design clock from the fixed 100 MHz FCLK0 through an
+    # MMCM + BUFGMUX_CTRL. axi_gpio_clkctrl sits on the STABLE FCLK0 branch of
+    # the interconnect, so it stays reachable while the switched domain is
+    # held in reset:
+    #   gpio[0]   = 1 -> design domain held in reset (proc_sys_reset aux)
+    #   gpio[2:1] = aes_clk_mux select (00=50, 01=75, 10=100 MHz)
+    # Procedure: assert reset -> change select -> settle -> release reset.
+    # MUST run before any AXI-Lite traffic to the design-domain slaves.
+    aes_freq = args.aes_freq
+    if "axi_gpio_clkctrl" in overlay.ip_dict:
+        clk_info = overlay.ip_dict["axi_gpio_clkctrl"]
+        clk_ctrl = pynq.MMIO(clk_info["phys_addr"], clk_info["addr_range"])
+        sel_map = {50: 0b00, 75: 0b01, 100: 0b10}
+        if aes_freq not in sel_map:
+            raise ValueError(f"Unsupported --aes-freq {aes_freq}; choose 50, 75 or 100")
+        sel = sel_map[aes_freq]
+        clk_ctrl.write(0x00, 0x1)                      # assert domain reset
+        time.sleep(0.002)
+        clk_ctrl.write(0x00, (sel << 1) | 0x1)         # switch the clock, reset held
+        time.sleep(0.010)
+        clk_ctrl.write(0x00, sel << 1)                 # release the domain
+        time.sleep(0.010)
+        print(f"[tx_daemon] Design clock set to {aes_freq} MHz (mux sel=0b{sel:02b}).")
+    else:
+        print("[tx_daemon] WARNING: axi_gpio_clkctrl missing; running at the bitstream default clock.")
+
     # --- Configure AES session sequencer ---
     from aes_seq_ctrl import AesSeqController, AesSeqConfig  # type: ignore
 
@@ -458,6 +485,8 @@ def _parse_args() -> argparse.Namespace:
                    help="Seconds between idle status prints (0 disables)")
     p.add_argument("--configure-only", action="store_true",
                    help="Configure overlay/sequencer/writer, then wait for an external C sender (tx_shim)")
+    p.add_argument("--aes-freq", type=int, default=50, choices=[50, 75, 100],
+                   help="Design-domain clock frequency in MHz (default: 50). Switches the PL MMCM+BUFGMUX at runtime; no rebuild needed.")
     p.add_argument("--idle-exit-s", type=float, default=0.0,
                    help="Exit after this many seconds with no ready buffers (0 disables)")
     return p.parse_args()

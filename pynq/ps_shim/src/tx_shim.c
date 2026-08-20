@@ -187,13 +187,16 @@ int main(int argc, char **argv)
                                       (const struct sockaddr *)&dst,
                                       sizeof(dst));
                 if (sent < 0) {
+                    /* ECONNREFUSED fires when the PC has no listener and its
+                     * ICMP port-unreachable arrives; NEVER exit - keep
+                     * draining so the pipeline stays 1:1. */
                     perror("sendto");
-                    break;
+                } else {
+                    wr32(fw, REG_IRQ_STATUS, 1u);            /* clear_irq (RW1C) */
+                    wr32(fw, REG_CONSUMED_MASK, 1u << idx);  /* mark consumed   */
+                    frames++;
+                    bytes += (uint64_t)sent;
                 }
-                wr32(fw, REG_IRQ_STATUS, 1u);            /* clear_irq (RW1C) */
-                wr32(fw, REG_CONSUMED_MASK, 1u << idx);  /* mark consumed   */
-                frames++;
-                bytes += (uint64_t)sent;
             }
         }
 
