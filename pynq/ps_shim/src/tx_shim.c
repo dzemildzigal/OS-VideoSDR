@@ -41,6 +41,8 @@
 #define REG_VALID_BYTES_BUF1 0x002Cu
 #define REG_DROP_COUNT       0x0030u
 #define REG_IRQ_STATUS       0x0038u
+#define REG_FRAME_ID_BUF0    0x0020u
+#define REG_FRAME_ID_BUF1    0x0024u
 #define REG_BUF0_ADDR_LO     0x0044u
 #define REG_BUF0_ADDR_HI     0x0048u
 #define REG_BUF1_ADDR_LO     0x004Cu
@@ -48,6 +50,9 @@
 
 #define REG_NONCE_HI 0x0040u
 #define REG_NONCE_LO 0x0044u
+
+#define REG_NONCE_SEED_HI 0x0014u
+#define REG_NONCE_SEED_LO 0x0018u
 
 #define MAX_FRAME_BYTES 4096u
 
@@ -122,6 +127,11 @@ int main(int argc, char **argv)
     if (buf[0] == MAP_FAILED || buf[1] == MAP_FAILED)
         return 1;
 
+    uint64_t nonce_seed =
+        ((uint64_t)rd32(seq, REG_NONCE_SEED_HI) << 32) |
+        (uint64_t)rd32(seq, REG_NONCE_SEED_LO);
+    printf("tx_shim: nonce seed = %" PRIu64 "\n", nonce_seed);
+
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("socket");
@@ -152,6 +162,7 @@ int main(int argc, char **argv)
 
     uint8_t stage[8 + MAX_FRAME_BYTES];
     uint64_t frames = 0, bytes = 0;
+    uint64_t debug_prefixes = 0;
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
     uint64_t started = monotonic_ms(), last_print = started;
 
@@ -160,19 +171,25 @@ int main(int argc, char **argv)
         if (mask == 0) {
             usleep(1000);
         } else {
-            uint64_t nonce_now = ((uint64_t)rd32(seq, REG_NONCE_HI) << 32)
-                               | (uint64_t)rd32(seq, REG_NONCE_LO);
-            uint32_t both = (mask & 0x3u) == 0x3u;
             for (int idx = 0; idx < 2; idx++) {
                 if (!(mask & (1u << idx)))
                     continue;
-                uint64_t nonce_pkt = (idx == 0 && both) ? nonce_now - 2
-                                                        : nonce_now - 1;
-                for (int b = 0; b < 8; b++)
-                    stage[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
 
+                uint32_t frame_id = rd32(fw, idx == 0 ? REG_FRAME_ID_BUF0
+                                                      : REG_FRAME_ID_BUF1);
                 uint32_t nbytes = rd32(fw, idx == 0 ? REG_VALID_BYTES_BUF0
                                                     : REG_VALID_BYTES_BUF1);
+                uint64_t nonce_pkt = nonce_seed + (uint64_t)frame_id;
+
+                if (debug_prefixes < 12) {
+                    printf("tx_shim: buf%d frame_id=%" PRIu32
+                           " nonce=%" PRIu64 " bytes=%" PRIu32 "\n",
+                           idx, frame_id, nonce_pkt, nbytes);
+                    debug_prefixes++;
+                }
+
+                for (int b = 0; b < 8; b++)
+                    stage[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
                 if (nbytes == 0) {
                     wr32(fw, REG_CONSUMED_MASK, 1u << idx);
                     continue;
