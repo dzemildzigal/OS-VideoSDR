@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 /*
  * tx_shim.c - C sender that replicates tx_daemon.py's send loop 1:1.
  *
@@ -31,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sched.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -115,7 +117,13 @@ static inline uint64_t monotonic_ns(void)
 
 /* Phase 0 step timers (ns accumulated since last 1s print). */
 static uint64_t t_wait, t_cache, t_copy, t_send, t_ack;
-static uint64_t n_polls, n_pkts;
+static uint64_t n_polls, n_pkts, n_batches, n_spin;
+
+/* Per-buffer datagram state so a whole ready set can leave in one
+ * sendmmsg call: [8B nonce prefix iovec] + [ciphertext from DDR iovec]. */
+static uint8_t  g_prefix[2][8];
+static struct iovec  g_iov[2][2];
+static struct mmsghdr g_msgs[2];
 
 int main(int argc, char **argv)
 {
@@ -191,11 +199,24 @@ int main(int argc, char **argv)
     fflush(stdout);
     wr32(seq, 0x00u, 1u);
 
+    /* Dedicated-core spin: the board has two A9s; the daemon idles on CPU0,
+     * the shim owns CPU1. No migration, no timer jitter. */
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(1, &cpuset);
+    if (sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
+        perror("sched_setaffinity (continuing)");
+    setpriority(PRIO_PROCESS, 0, -20);
+
     /* (datagram assembled in-place via iovecs; no staging buffer) */
     uint64_t frames = 0, bytes = 0;
     uint64_t debug_prefixes = 0;
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
     uint64_t started = monotonic_ms(), last_print = started;
+
+    int nready;
+    int rdy_idx[2];
+    uint32_t rdy_bytes[2];
 
     for (;;) {
         uint64_t t0 = monotonic_ns();
@@ -204,78 +225,100 @@ int main(int argc, char **argv)
         t_wait += t1 - t0;
         n_polls++;
         if (mask == 0) {
-            usleep(10);
-        } else {
-            for (int idx = 0; idx < 2; idx++) {
-                if (!(mask & (1u << idx)))
-                    continue;
+            /* Busy spin. The old usleep(10) hid ~25us per packet: the
+             * writer refills a freed buffer in ~5us, so sleeping for 10us
+             * per poll (8.5 polls/pkt) put dead time between producer and
+             * consumer. The shim owns its core, spinning is free. */
+            n_spin++;
+            continue;
+        }
 
-                uint32_t frame_id = rd32(fw, idx == 0 ? REG_FRAME_ID_BUF0
-                                                      : REG_FRAME_ID_BUF1);
-                uint32_t nbytes = rd32(fw, idx == 0 ? REG_VALID_BYTES_BUF0
-                                                    : REG_VALID_BYTES_BUF1);
-                uint64_t nonce_pkt = nonce_seed + (uint64_t)frame_id;
+        /* ---- collect every ready buffer, cache-invalidate, build msgs ---- */
+        nready = 0;
+        for (int idx = 0; idx < 2; idx++) {
+            if (!(mask & (1u << idx)))
+                continue;
 
-                if (debug_prefixes < 12) {
-                    printf("tx_shim: buf%d frame_id=%" PRIu32
-                           " nonce=%" PRIu64 " bytes=%" PRIu32 "\n",
-                           idx, frame_id, nonce_pkt, nbytes);
-                    debug_prefixes++;
-                }
+            uint32_t frame_id = rd32(fw, idx == 0 ? REG_FRAME_ID_BUF0
+                                                  : REG_FRAME_ID_BUF1);
+            uint32_t nbytes = rd32(fw, idx == 0 ? REG_VALID_BYTES_BUF0
+                                                : REG_VALID_BYTES_BUF1);
+            uint64_t nonce_pkt = nonce_seed + (uint64_t)frame_id;
 
-                if (nbytes == 0) {
-                    wr32(fw, REG_CONSUMED_MASK, 1u << idx);
-                    continue;
-                }
-                if (nbytes > MAX_FRAME_BYTES)
-                    nbytes = MAX_FRAME_BYTES;
-
-                // The PL writes these buffers through the HP port. Invalidate
-                // the ARM cache before reading the buffer; without this, the
-                // shim can send stale data and every GCM tag check fails.
-                uint64_t c0 = monotonic_ns();
-                if (do_copy)
-                    dcache_invalidate((void *)buf[idx], nbytes);
-                uint64_t c1 = monotonic_ns();
-                t_cache += c1 - c0;
-
-                /* sendmsg with two iovecs: 8-byte nonce prefix + ciphertext
-                 * read directly from the DDR buffer. No stage memcpy. */
-                uint8_t prefix[8];
-                for (int b = 0; b < 8; b++)
-                    prefix[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
-                struct iovec iov[2] = {
-                    { prefix, 8 },
-                    { (void *)buf[idx], nbytes },
-                };
-                struct msghdr mh;
-                memset(&mh, 0, sizeof(mh));
-                mh.msg_iov = iov;
-                mh.msg_iovlen = 2;
-                uint64_t c2 = monotonic_ns();
-                t_copy += c2 - c1;
-
-                ssize_t sent = 0;
-                if (do_send) {
-                    sent = sendmsg(sock, &mh, 0);
-                }
-                uint64_t c3 = monotonic_ns();
-                t_send += c3 - c2;
-                if (sent < 0 && do_send) {
-                    /* ECONNREFUSED fires when the PC has no listener and its
-                     * ICMP port-unreachable arrives; NEVER exit - keep
-                     * draining so the pipeline stays 1:1. */
-                    perror("sendto");
-                } else {
-                    uint64_t a0 = monotonic_ns();
-                    wr32(fw, REG_IRQ_STATUS, 1u);            /* clear_irq (RW1C) */
-                    wr32(fw, REG_CONSUMED_MASK, 1u << idx);  /* mark consumed   */
-                    t_ack += monotonic_ns() - a0;
-                    frames++;
-                    bytes += do_send ? (uint64_t)sent : (uint64_t)(8 + nbytes);
-                    n_pkts++;
-                }
+            if (debug_prefixes < 12) {
+                printf("tx_shim: buf%d frame_id=%" PRIu32
+                       " nonce=%" PRIu64 " bytes=%" PRIu32 "\n",
+                       idx, frame_id, nonce_pkt, nbytes);
+                debug_prefixes++;
             }
+
+            if (nbytes == 0) {
+                wr32(fw, REG_CONSUMED_MASK, 1u << idx);
+                continue;
+            }
+            if (nbytes > MAX_FRAME_BYTES)
+                nbytes = MAX_FRAME_BYTES;
+
+            // The PL writes these buffers through the HP port. Invalidate
+            // the ARM cache before reading the buffer; without this, the
+            // shim can send stale data and every GCM tag check fails.
+            uint64_t c0 = monotonic_ns();
+            if (do_copy)
+                dcache_invalidate((void *)buf[idx], nbytes);
+            uint64_t c1 = monotonic_ns();
+            t_cache += c1 - c0;
+
+            uint8_t *pfx = g_prefix[idx];
+            for (int b = 0; b < 8; b++)
+                pfx[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
+            g_iov[idx][0].iov_base = pfx;
+            g_iov[idx][0].iov_len  = 8;
+            g_iov[idx][1].iov_base = (void *)buf[idx];
+            g_iov[idx][1].iov_len  = nbytes;
+            memset(&g_msgs[idx].msg_hdr, 0, sizeof(struct msghdr));
+            g_msgs[idx].msg_hdr.msg_iov    = g_iov[idx];
+            g_msgs[idx].msg_hdr.msg_iovlen = 2;
+            g_msgs[idx].msg_len = 0;
+
+            rdy_idx[nready]   = idx;
+            rdy_bytes[nready] = nbytes;
+            nready++;
+        }
+        uint64_t c2 = monotonic_ns();
+        t_copy += c2 - t1;
+
+        /* ---- one syscall for the whole ready set ---- */
+        int sent_pkts = 0;
+        if (nready > 0) {
+            uint64_t s0 = monotonic_ns();
+            if (do_send)
+                sent_pkts = sendmmsg(sock, g_msgs, (unsigned int)nready, 0);
+            else
+                sent_pkts = nready;
+            uint64_t s1 = monotonic_ns();
+            t_send += s1 - s0;
+            n_batches++;
+            if (sent_pkts < 0 && do_send) {
+                /* ECONNREFUSED fires when the PC has no listener and its
+                 * ICMP port-unreachable arrives; NEVER exit - keep
+                 * draining so the pipeline stays 1:1. */
+                perror("sendmmsg");
+                sent_pkts = 0;
+            }
+
+            /* ---- ack every drained buffer ---- */
+            uint64_t a0 = monotonic_ns();
+            int acked = 0;
+            for (int i = 0; i < nready; i++) {
+                int idx = rdy_idx[i];
+                wr32(fw, REG_IRQ_STATUS, 1u);           /* clear_irq (RW1C) */
+                wr32(fw, REG_CONSUMED_MASK, 1u << idx); /* mark consumed   */
+                frames++;
+                bytes += (uint64_t)(8 + rdy_bytes[i]);
+                acked++;
+            }
+            t_ack += monotonic_ns() - a0;
+            n_pkts += acked;
         }
 
         uint64_t now = monotonic_ms();
@@ -285,15 +328,17 @@ int main(int argc, char **argv)
                    " drops_delta=%u\n",
                    frames, bytes, drops_now - drops_last);
             printf("tx_shim: t[pkt] wait=%.1fus cache=%.1fus copy=%.1fus "
-                   "send=%.1fus ack=%.1fus polls/pkt=%.1f\n",
+                   "send=%.1fus ack=%.1fus polls/pkt=%.1f batch=%.2f spin%%=%.0f\n",
                    n_pkts ? (double)t_wait / n_pkts / 1000.0 : 0.0,
                    n_pkts ? (double)t_cache / n_pkts / 1000.0 : 0.0,
                    n_pkts ? (double)t_copy  / n_pkts / 1000.0 : 0.0,
                    n_pkts ? (double)t_send  / n_pkts / 1000.0 : 0.0,
                    n_pkts ? (double)t_ack   / n_pkts / 1000.0 : 0.0,
-                   n_pkts ? (double)n_polls / (double)n_pkts : 0.0);
+                   n_pkts ? (double)n_polls / (double)n_pkts : 0.0,
+                   n_batches ? (double)n_pkts / (double)n_batches : 0.0,
+                   (n_polls + n_spin) ? 100.0 * (double)n_spin / (double)(n_polls + n_spin) : 0.0);
             t_wait = t_cache = t_copy = t_send = t_ack = 0;
-            n_polls = n_pkts = 0;
+            n_polls = n_pkts = n_batches = n_spin = 0;
             drops_last = drops_now;
             last_print = now;
         }
