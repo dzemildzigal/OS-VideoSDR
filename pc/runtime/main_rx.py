@@ -142,7 +142,7 @@ def main() -> None:
     # Initialize components
     crypto = AesGcmSoftware(key)
     reasm = FrameReassembler()
-    display = FrameDisplay(display_mode=args.display_mode)
+    display = FrameDisplay(display_mode=args.display_mode, width=1280, height=720)
     nonce_validator = NonceValidator(replay_window_packets=config.crypto.replay_window_packets)
     
     print(f"RX config: crypto=aesgcm display={args.display_mode} max_frames={args.max_frames}")
@@ -239,7 +239,10 @@ def main() -> None:
             
             completed += 1
             try:
-                display.show(frame, frame_id=completed)
+                if header.payload_type == 2:
+                    display.show(frame, frame_id=completed, format_hint="yuv420p")
+                else:
+                    display.show(frame, frame_id=completed, format_hint="rgb24")
             except Exception as exc:
                 print(f"RX display failed: {exc}")
             

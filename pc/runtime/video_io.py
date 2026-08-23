@@ -73,6 +73,27 @@ class FrameDisplay:
                 if len(src) < pixels:
                     src = src + b"\x00" * (pixels - len(src))
                 img = np.frombuffer(src, dtype=np.uint8).reshape((self._height, self._width, 3))
+                img = self._cv2.cvtColor(img, self._cv2.COLOR_RGB2BGR)
+                self._cv2.imshow(self._window, img)
+            elif format_hint == "yuv420p":
+                # Packed YUV420 from the PL converter: 2 beats per 2x2 block,
+                # 6 bytes = {Y00, Y01, Cb, Y10, Y11, Cr}, 230400 blocks/frame.
+                import numpy as np  # noqa: F811 (re-imported for clarity)
+                w, h = self._width, self._height
+                blocks = h * w // 4
+                src = frame[:blocks * 6]
+                if len(src) < blocks * 6:
+                    src = src + b"\x00" * (blocks * 6 - len(src))
+                g = np.frombuffer(src, dtype=np.uint8).reshape((h // 2, w // 2, 6))
+                yy = np.empty((h, w), dtype=np.uint8)
+                yy[0::2, 0::2] = g[:, :, 0]
+                yy[0::2, 1::2] = g[:, :, 1]
+                yy[1::2, 0::2] = g[:, :, 3]
+                yy[1::2, 1::2] = g[:, :, 4]
+                uu = g[:, :, 2]
+                vv = g[:, :, 5]
+                i420 = np.concatenate((yy.ravel(), uu.ravel(), vv.ravel())).reshape(h * 3 // 2, w)
+                img = self._cv2.cvtColor(i420, self._cv2.COLOR_YUV2BGR_I420)
                 self._cv2.imshow(self._window, img)
             else:
                 print(f"Unsupported format hint: {format_hint}")
