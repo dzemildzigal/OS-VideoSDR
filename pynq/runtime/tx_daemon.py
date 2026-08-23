@@ -235,16 +235,15 @@ def run(args: argparse.Namespace) -> None:
         if aes_freq not in sel_map:
             raise ValueError(f"Unsupported --aes-freq {aes_freq}; choose 50, 75 or 100")
         sel = sel_map[aes_freq]
-        # NOTE: the BD configures this GPIO as C_ALL_OUTPUTS=1 (hwh), so the
-        # TRI register is not implemented and always reads 0xFFFFFFFF. That
-        # is expected: the pins are hardwired outputs. Do NOT check TRI here.
-        # Verify the switch by reading the sel bits back from DATA instead.
-        clk_ctrl.write(0x00, 0x1)                      # assert domain reset
-        time.sleep(0.002)
-        clk_ctrl.write(0x00, (sel << 1) | 0x1)         # switch the clock, reset held
-        time.sleep(0.010)
-        clk_ctrl.write(0x00, sel << 1)                 # release the domain
-        time.sleep(0.010)
+        # The old assert-reset -> switch -> release sequence is self-
+        # defeating on this board: bit0 feeds rst_ps7_100m/aux_reset_in and
+        # the reset gates the AXI branch to this very gpio, so the sel write
+        # lands while the register is held in reset and reads back 0
+        # (verified live: write 0x4 with bit0 untouched sticks; the daemon's
+        # 0x1 -> 0x5 -> 0x4 sequence left DATA=0 and the design at 50 MHz).
+        # BUFGMUX_CTRL switches glitchlessly on its own - just drive sel.
+        clk_ctrl.write(0x00, sel << 1)
+        time.sleep(0.050)
         got = (int(clk_ctrl.read(0x00)) >> 1) & 0x3
         if got != sel:
             raise RuntimeError(f"clkctrl sel readback 0b{got:02b} != 0b{sel:02b}"
