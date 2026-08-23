@@ -197,7 +197,12 @@ int main(int argc, char **argv)
                 if (nbytes > MAX_FRAME_BYTES)
                     nbytes = MAX_FRAME_BYTES;
 
-                dcache_invalidate((void *)buf[idx], nbytes);
+                // NOTE: no dcache_invalidate here. /dev/mem on ARM Linux is
+                // mapped uncached, so the PL-written buffer is already
+                // coherent. The old cacheflush(syscall, scope=0) call flushed
+                // the ENTIRE D-cache per packet (~60us) and capped the whole
+                // pipeline at ~10k pkt/s - measured with the writer's pattern
+                // flood (DROP_COUNT climbed 461M times in 10 s).
                 memcpy(stage + 8, (const void *)buf[idx], nbytes);
 
                 ssize_t sent = sendto(sock, stage, 8 + nbytes, 0,
