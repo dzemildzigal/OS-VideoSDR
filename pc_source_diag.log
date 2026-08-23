@@ -1,0 +1,42 @@
+FAIL t=08:30:12 nonce=8 wire=dd3785771995685d51d2998784b30328 exp=93c18eda453b987ae799148f95f3d71e
+  word0: wire=dd378577 exp=93c18eda MISMATCH
+  word1: wire=1995685d exp=453b987a MISMATCH
+  word2: wire=51d29987 exp=e799148f MISMATCH
+  word3: wire=84b30328 exp=95f3d71e MISMATCH
+BOARD DUMP:
+NONCE 29
+TAGV 0
+TAG 00031f1f 190bfdd6 85240804 aadfd4f5
+GH  78c6af11 646d86eb e85caf27 e0c06c59
+PUSH 190bfdd6 85240804 aadfd4f5 78c6af11
+MXIS 190bfdd6 85240804 aadfd4f5 78c6af11
+tx_shim: frames=5 bytes=6200 drops_delta=0
+tx_shim: frames=5 bytes=6200 drops_delta=0
+
+FAIL t=08:30:14 nonce=b wire=be97daa8de09ad665f03d0e811adcbfd exp=94f85d08aafb9d3620697443832acd93
+  word0: wire=be97daa8 exp=94f85d08 MISMATCH
+  word1: wire=de09ad66 exp=aafb9d36 MISMATCH
+  word2: wire=5f03d0e8 exp=20697443 MISMATCH
+  word3: wire=11adcbfd exp=832acd93 MISMATCH
+FAIL t=08:30:14 nonce=15 wire=ed813a319f20ce8487829226f98bfc5b exp=32756d4b824145f16accf627a0522d9a
+  word0: wire=ed813a31 exp=32756d4b MISMATCH
+  word1: wire=9f20ce84 exp=824145f1 MISMATCH
+  word2: wire=87829226 exp=6accf627 MISMATCH
+  word3: wire=f98bfc5b exp=a0522d9a MISMATCH
+FAIL t=08:30:14 nonce=16 wire=b3ba35803650203d784047f457634811 exp=cdcce17f33f96080de0ee3107449d28f
+  word0: wire=b3ba3580 exp=cdcce17f MISMATCH
+  word1: wire=3650203d exp=33f96080 MISMATCH
+  word2: wire=784047f4 exp=de0ee310 MISMATCH
+  word3: wire=57634811 exp=7449d28f MISMATCH
+FAIL t=08:30:14 nonce=1b wire=8a82be78d6430faf65e6df309a314648 exp=6c49f9e897d5a9ba8e186d020785b019
+  word0: wire=8a82be78 exp=6c49f9e8 MISMATCH
+  word1: wire=d6430faf exp=97d5a9ba MISMATCH
+  word2: wire=65e6df30 exp=8e186d02 MISMATCH
+  word3: wire=9a314648 exp=0785b019 MISMATCH
+RESULT source_diag: ok=0 bad=5 minutes=2.0
+FAILS=5
+  08:30:12 nonce=8 wire=dd3785771995685d51d2998784b30328 exp=93c18eda453b987ae799148f95f3d71e
+  08:30:14 nonce=b wire=be97daa8de09ad665f03d0e811adcbfd exp=94f85d08aafb9d3620697443832acd93
+  08:30:14 nonce=15 wire=ed813a319f20ce8487829226f98bfc5b exp=32756d4b824145f16accf627a0522d9a
+  08:30:14 nonce=16 wire=b3ba35803650203d784047f457634811 exp=cdcce17f33f96080de0ee3107449d28f
+  08:30:14 nonce=1b wire=8a82be78d6430faf65e6df309a314648 exp=6c49f9e897d5a9ba8e186d020785b019

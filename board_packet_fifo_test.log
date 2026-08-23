@@ -1,0 +1,81 @@
+
+START
+writer_status            0x00000005
+writer_error             0x00000000
+writer_complete          0
+aes_tag_complete         0
+pixel_lock               1
+vid_reset_level          0
+vid_of                   20418274525184
+vid_uf                   0
+vid_reset_pulse          8589934592
+prefifo                  459475038685364224
+pixelclk                 2695221291115347970
+de                       7935452030733123585
+pkt_fifo_wr_count        258
+pkt_fifo_rd_count        258
+pkt_fifo_status          0x00000002
+pkt_status               0x00000025
+aes_stall                0x09000001
+aes_status               0x0000011f
+pkt_status_decode      vtv=0 vtr=1 tuser=0 state=1 ptv=0 ptr=1
+pkt_fifo_decode        s_ready=0 m_valid=1
+vtc                    ctrl=0x00000009 status=0x00000f00 error=0x007f0000 dasize=0x02d00500 dhsize=0x00000672 dvsize=0x000002ee dtstat=0x00000006 dpol=0x0000001c
+last seq               total=0 setup=0 wait_empty=0 poll=0 pass=0 wait_tag=0 tag_read=0 ghash_read=0
+last AES stalls        fifo_full=0 empty_no_ct=0 pt_blocked=0 no_offer=0 gh_not_ready=0 slot_blocked=0
+last writer cycles     fetch=6202575989 fetch_wait=6202579399 fetch_pack=0 aw=0 w=0 b=0 idle_blocked=0
+
+INTERVAL elapsed=60.006 s
+writer_complete_delta=0 rate=0.00 pkt/s
+aes_tag_complete_delta=0 rate=0.00 tag/s
+prefifo_delta=283893971011239936 rate=4731075686331282.00 /s (accepted video beat)
+pixelclk_delta=690119257836486657 rate=11500795278565188.00 /s (PixelClk edge)
+de_delta=-4194914065744658431 rate=-69907986675447560.00 /s (DE pixel)
+vid_of_delta=10625749090304 rate=177077459556.91 /s (v_vid overflow)
+vid_uf_delta=0 rate=0.00 /s (v_vid underflow)
+vid_reset_pulse_delta=0 rate=0.00 /s (reset pulse)
+wr_aw_delta=0
+wr_w_delta=0
+wr_b_delta=0
+wr_fetch_wait_delta=3000306222
+wr_fetch_pack_delta=0
+wr_idle_blocked_delta=0
+wr_fetch_delta=3000306469
+aes_fifo_full_delta=0
+aes_empty_no_ct_delta=0
+aes_pt_blocked_delta=0
+aes_no_offer_delta=0
+aes_gh_not_ready_delta=0
+aes_slot_blocked_delta=0
+aes_gcm_busy_delta=0
+pkt_fifo_wr_count_trace min=258 max=258 first=258 last=258
+pkt_fifo_rd_count_trace min=258 max=258 first=258 last=258
+pkt_fifo_status samples: [(2, 596)]
+pkt_status samples: [(37, 578), (101, 15), (69, 2), (71, 1)]
+VTC lock samples: Counter({0: 596})
+
+END
+writer_status            0x00000005
+writer_error             0x00000000
+writer_complete          0
+aes_tag_complete         0
+pixel_lock               1
+vid_reset_level          0
+vid_of                   31044023615488
+vid_uf                   0
+vid_reset_pulse          8589934592
+prefifo                  743369009696604160
+pixelclk                 3385340548951834627
+de                       3740537964988465154
+pkt_fifo_wr_count        258
+pkt_fifo_rd_count        258
+pkt_fifo_status          0x00000002
+pkt_status               0x00000025
+aes_stall                0x09000001
+aes_status               0x0000011f
+pkt_status_decode      vtv=0 vtr=1 tuser=0 state=1 ptv=0 ptr=1
+pkt_fifo_decode        s_ready=0 m_valid=1
+vtc                    ctrl=0x00000009 status=0x00000f00 error=0x007f0000 dasize=0x02d00500 dhsize=0x00000672 dvsize=0x000002ee dtstat=0x00000006 dpol=0x0000001c
+last seq               total=0 setup=0 wait_empty=0 poll=0 pass=0 wait_tag=0 tag_read=0 ghash_read=0
+last AES stalls        fifo_full=0 empty_no_ct=0 pt_blocked=0 no_offer=0 gh_not_ready=0 slot_blocked=0
+last writer cycles     fetch=9202882458 fetch_wait=9202885621 fetch_pack=0 aw=0 w=0 b=0 idle_blocked=0

@@ -1,0 +1,22 @@
+FAIL t=09:10:20 nonce=6 wire=dd3785771995685d51d2998784b30328 exp=cdf6121266efaac044ba7680c31b09c8
+  word0: wire=dd378577 exp=cdf61212 MISMATCH
+  word1: wire=1995685d exp=66efaac0 MISMATCH
+  word2: wire=51d29987 exp=44ba7680 MISMATCH
+  word3: wire=84b30328 exp=c31b09c8 MISMATCH
+BOARD DUMP:
+
+FAIL t=09:10:20 nonce=b wire=be97daa8de09ad665f03d0e811adcbfd exp=94f85d08aafb9d3620697443832acd93
+  word0: wire=be97daa8 exp=94f85d08 MISMATCH
+  word1: wire=de09ad66 exp=aafb9d36 MISMATCH
+  word2: wire=5f03d0e8 exp=20697443 MISMATCH
+  word3: wire=11adcbfd exp=832acd93 MISMATCH
+FAIL t=09:10:20 nonce=f wire=c7f5fc926cd40dd568b49da91fa6f1ab exp=08fc458b6861bf442f1dd2fc18e46efa
+  word0: wire=c7f5fc92 exp=08fc458b MISMATCH
+  word1: wire=6cd40dd5 exp=6861bf44 MISMATCH
+  word2: wire=68b49da9 exp=2f1dd2fc MISMATCH
+  word3: wire=1fa6f1ab exp=18e46efa MISMATCH
+RESULT last_diag: ok=0 bad=3 minutes=2.0
+FAILS=3
+  09:10:20 nonce=6 wire=dd3785771995685d51d2998784b30328 exp=cdf6121266efaac044ba7680c31b09c8
+  09:10:20 nonce=b wire=be97daa8de09ad665f03d0e811adcbfd exp=94f85d08aafb9d3620697443832acd93
+  09:10:20 nonce=f wire=c7f5fc926cd40dd568b49da91fa6f1ab exp=08fc458b6861bf442f1dd2fc18e46efa
