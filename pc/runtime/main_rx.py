@@ -239,10 +239,7 @@ def main() -> None:
             
             completed += 1
             try:
-                if header.payload_type == 2:
-                    display.show(frame, frame_id=completed, format_hint="yuv420p")
-                else:
-                    display.show(frame, frame_id=completed, format_hint="rgb24")
+                display.show(frame, frame_id=completed, format_hint="rgb24")
             except Exception as exc:
                 print(f"RX display failed: {exc}")
             

@@ -469,7 +469,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--key-hex",      default="", help="64-char AES-256 key hex")
     p.add_argument("--session-id",   type=int, default=1)
     p.add_argument("--stream-id",    type=int, default=1)
-    p.add_argument("--payload-type", type=int, default=2)
+    p.add_argument("--payload-type", type=int, default=1)
     p.add_argument("--key-id",       type=int, default=1)
     p.add_argument("--nonce-domain", type=lambda x: int(x, 0), default=1)
     p.add_argument("--nonce-seed",   type=lambda x: int(x, 0), default=1)
