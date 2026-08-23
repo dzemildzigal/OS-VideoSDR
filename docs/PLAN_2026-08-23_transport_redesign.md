@@ -92,7 +92,7 @@ Unbind macb after link-up; drive GEM descriptors from a userspace ring.
 2. **720p30 EDID + remove PL ST_SKIP**: stops the 60->30 capture/skip burst;
    makes the packet rate flat 70.5k (or 9.7k with A). Independent of transport.
 
-## 5. Recommended path
+## 5. Recommended path (SUPERSEDED by Gate 0: jumbo FAILED both board kernel and network path - Option B is primary; see GATE0_2026-08-23_jumbo_feasibility.md)
 
 **A first, B as fallback.**
 
