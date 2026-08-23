@@ -169,7 +169,7 @@ int main(int argc, char **argv)
     for (;;) {
         uint32_t mask = rd32(fw, REG_READY_MASK) & 0x3u;
         if (mask == 0) {
-            usleep(1000);
+            usleep(10);
         } else {
             for (int idx = 0; idx < 2; idx++) {
                 if (!(mask & (1u << idx)))
