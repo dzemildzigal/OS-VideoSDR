@@ -235,13 +235,22 @@ def run(args: argparse.Namespace) -> None:
         if aes_freq not in sel_map:
             raise ValueError(f"Unsupported --aes-freq {aes_freq}; choose 50, 75 or 100")
         sel = sel_map[aes_freq]
+        # NOTE: the BD configures this GPIO as C_ALL_OUTPUTS=1 (hwh), so the
+        # TRI register is not implemented and always reads 0xFFFFFFFF. That
+        # is expected: the pins are hardwired outputs. Do NOT check TRI here.
+        # Verify the switch by reading the sel bits back from DATA instead.
         clk_ctrl.write(0x00, 0x1)                      # assert domain reset
         time.sleep(0.002)
         clk_ctrl.write(0x00, (sel << 1) | 0x1)         # switch the clock, reset held
         time.sleep(0.010)
         clk_ctrl.write(0x00, sel << 1)                 # release the domain
         time.sleep(0.010)
-        print(f"[tx_daemon] Design clock set to {aes_freq} MHz (mux sel=0b{sel:02b}).")
+        got = (int(clk_ctrl.read(0x00)) >> 1) & 0x3
+        if got != sel:
+            raise RuntimeError(f"clkctrl sel readback 0b{got:02b} != 0b{sel:02b}"
+                               f" @ 0x{clk_info['phys_addr']:08X}")
+        print(f"[tx_daemon] Design clock set to {aes_freq} MHz (mux sel=0b{sel:02b}, "
+              f"readback=0b{got:02b}).")
     else:
         print("[tx_daemon] WARNING: axi_gpio_clkctrl missing; running at the bitstream default clock.")
 

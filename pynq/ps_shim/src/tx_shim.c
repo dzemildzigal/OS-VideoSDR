@@ -14,6 +14,12 @@
  *   datagram = 8-byte big-endian nonce prefix + buffer[0..nbytes)
  *
  * Wire format per packet: [8B nonce prefix][1216B CT][16B tag] = 1240B.
+ *
+ * Phase 0 instrumentation: per-step nanosecond timers (wait/cache/copy/
+ * send/ack) printed once per second, plus optional no-send modes.
+ *   argv[3]: "send"   (default) full path
+ *            "nosend" cache+copy+ack, skip sendto
+ *            "nocopy" ack only, skip cache/copy/sendto (writer ceiling)
  */
 
 #include <arpa/inet.h>
@@ -100,6 +106,17 @@ static uint64_t monotonic_ms(void)
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
+static inline uint64_t monotonic_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* Phase 0 step timers (ns accumulated since last 1s print). */
+static uint64_t t_wait, t_cache, t_copy, t_send, t_ack;
+static uint64_t n_polls, n_pkts;
+
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -107,6 +124,13 @@ int main(int argc, char **argv)
     uint16_t dst_port = 5600;
     if (argc > 1) dst_ip = argv[1];
     if (argc > 2) dst_port = (uint16_t)atoi(argv[2]);
+
+    /* argv[3]: send (default) | nosend | nocopy */
+    const char *mode = (argc > 3) ? argv[3] : "send";
+    int do_send = strcmp(mode, "nosend") != 0 && strcmp(mode, "nocopy") != 0;
+    int do_copy = strcmp(mode, "nocopy") != 0;
+    if (!do_send || !do_copy)
+        printf("tx_shim: MEASURE MODE '%s' - packets are NOT sent\n", mode);
 
     volatile uint8_t *fw = map_devmem(WRITER_BASE, 0x1000);
     volatile uint8_t *seq = map_devmem(SEQ_BASE, 0x1000);
@@ -149,6 +173,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    /* Connected socket: one-time binding; sendmsg() then skips the
+     * per-call sockaddr copy that sendto() repeats every datagram. */
+    if (connect(sock, (const struct sockaddr *)&dst, sizeof(dst)) < 0) {
+        perror("connect");
+        return 1;
+    }
+
     printf("tx_shim: sending to %s:%u (1:1 daemon loop)\n", dst_ip, dst_port);
     fflush(stdout);
 
@@ -160,14 +191,18 @@ int main(int argc, char **argv)
     fflush(stdout);
     wr32(seq, 0x00u, 1u);
 
-    uint8_t stage[8 + MAX_FRAME_BYTES];
+    /* (datagram assembled in-place via iovecs; no staging buffer) */
     uint64_t frames = 0, bytes = 0;
     uint64_t debug_prefixes = 0;
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
     uint64_t started = monotonic_ms(), last_print = started;
 
     for (;;) {
+        uint64_t t0 = monotonic_ns();
         uint32_t mask = rd32(fw, REG_READY_MASK) & 0x3u;
+        uint64_t t1 = monotonic_ns();
+        t_wait += t1 - t0;
+        n_polls++;
         if (mask == 0) {
             usleep(10);
         } else {
@@ -188,8 +223,6 @@ int main(int argc, char **argv)
                     debug_prefixes++;
                 }
 
-                for (int b = 0; b < 8; b++)
-                    stage[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
                 if (nbytes == 0) {
                     wr32(fw, REG_CONSUMED_MASK, 1u << idx);
                     continue;
@@ -200,22 +233,47 @@ int main(int argc, char **argv)
                 // The PL writes these buffers through the HP port. Invalidate
                 // the ARM cache before reading the buffer; without this, the
                 // shim can send stale data and every GCM tag check fails.
-                dcache_invalidate((void *)buf[idx], nbytes);
-                memcpy(stage + 8, (const void *)buf[idx], nbytes);
+                uint64_t c0 = monotonic_ns();
+                if (do_copy)
+                    dcache_invalidate((void *)buf[idx], nbytes);
+                uint64_t c1 = monotonic_ns();
+                t_cache += c1 - c0;
 
-                ssize_t sent = sendto(sock, stage, 8 + nbytes, 0,
-                                      (const struct sockaddr *)&dst,
-                                      sizeof(dst));
-                if (sent < 0) {
+                /* sendmsg with two iovecs: 8-byte nonce prefix + ciphertext
+                 * read directly from the DDR buffer. No stage memcpy. */
+                uint8_t prefix[8];
+                for (int b = 0; b < 8; b++)
+                    prefix[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
+                struct iovec iov[2] = {
+                    { prefix, 8 },
+                    { (void *)buf[idx], nbytes },
+                };
+                struct msghdr mh;
+                memset(&mh, 0, sizeof(mh));
+                mh.msg_iov = iov;
+                mh.msg_iovlen = 2;
+                uint64_t c2 = monotonic_ns();
+                t_copy += c2 - c1;
+
+                ssize_t sent = 0;
+                if (do_send) {
+                    sent = sendmsg(sock, &mh, 0);
+                }
+                uint64_t c3 = monotonic_ns();
+                t_send += c3 - c2;
+                if (sent < 0 && do_send) {
                     /* ECONNREFUSED fires when the PC has no listener and its
                      * ICMP port-unreachable arrives; NEVER exit - keep
                      * draining so the pipeline stays 1:1. */
                     perror("sendto");
                 } else {
+                    uint64_t a0 = monotonic_ns();
                     wr32(fw, REG_IRQ_STATUS, 1u);            /* clear_irq (RW1C) */
                     wr32(fw, REG_CONSUMED_MASK, 1u << idx);  /* mark consumed   */
+                    t_ack += monotonic_ns() - a0;
                     frames++;
-                    bytes += (uint64_t)sent;
+                    bytes += do_send ? (uint64_t)sent : (uint64_t)(8 + nbytes);
+                    n_pkts++;
                 }
             }
         }
@@ -226,6 +284,16 @@ int main(int argc, char **argv)
             printf("tx_shim: frames=%" PRIu64 " bytes=%" PRIu64
                    " drops_delta=%u\n",
                    frames, bytes, drops_now - drops_last);
+            printf("tx_shim: t[pkt] wait=%.1fus cache=%.1fus copy=%.1fus "
+                   "send=%.1fus ack=%.1fus polls/pkt=%.1f\n",
+                   n_pkts ? (double)t_wait / n_pkts / 1000.0 : 0.0,
+                   n_pkts ? (double)t_cache / n_pkts / 1000.0 : 0.0,
+                   n_pkts ? (double)t_copy  / n_pkts / 1000.0 : 0.0,
+                   n_pkts ? (double)t_send  / n_pkts / 1000.0 : 0.0,
+                   n_pkts ? (double)t_ack   / n_pkts / 1000.0 : 0.0,
+                   n_pkts ? (double)n_polls / (double)n_pkts : 0.0);
+            t_wait = t_cache = t_copy = t_send = t_ack = 0;
+            n_polls = n_pkts = 0;
             drops_last = drops_now;
             last_print = now;
         }
