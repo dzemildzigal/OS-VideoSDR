@@ -277,8 +277,14 @@ def run(args: argparse.Namespace) -> None:
         gpio_info = overlay.ip_dict["axi_gpio_hdmiin"]
         hdmi_gpio = HdmiFrontEndGpio(pynq.MMIO(gpio_info["phys_addr"], gpio_info["addr_range"]))
         if args.force_hpd:
+            # Force the source to re-read the EDID after each overlay load.
+            # Without a real HPD transition, an already-connected source can
+            # keep its previous 720p60 mode.
+            hdmi_gpio.set_hpd(False)
+            time.sleep(0.250)
             hdmi_gpio.set_hpd(True)
-            print("[tx_daemon] HDMI HPD asserted via axi_gpio_hdmiin.")
+            time.sleep(1.000)
+            print("[tx_daemon] HDMI HPD pulsed and asserted via axi_gpio_hdmiin.")
         print(f"[tx_daemon] HDMI pixel lock={hdmi_gpio.pixel_lock()}")
     else:
         print("[tx_daemon] WARNING: axi_gpio_hdmiin missing; cannot drive HPD or read lock.")
