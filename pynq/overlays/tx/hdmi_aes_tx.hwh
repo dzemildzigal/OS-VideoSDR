@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
-<EDKSYSTEM EDWVERSION="1.2" TIMESTAMP="Sun Aug 23 14:18:24 2026" VIVADOVERSION="2024.1.2">
+<EDKSYSTEM EDWVERSION="1.2" TIMESTAMP="Mon Aug 24 16:07:33 2026" VIVADOVERSION="2024.1.2">
 
   <SYSTEMINFO ARCH="zynq" BOARD="tul.com.tw:pynq-z2:part0:1.0" DEVICE="7z020" NAME="hdmi_aes_tx" PACKAGE="clg400" SPEEDGRADE="-1"/>
 
@@ -235,7 +235,7 @@
     <MODULE COREREVISION="1" FULLNAME="/aes_clk_mux" HWVERSION="1.0" INSTANCE="aes_clk_mux" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="clk_mux_ctrl" VLNV="xilinx.com:module_ref:clk_mux_ctrl:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_clk_mux_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_clk_mux_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -263,6 +263,7 @@
             <CONNECTION INSTANCE="rst_ps7_100m" PORT="slowest_sync_clk"/>
             <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXI_ACLK"/>
             <CONNECTION INSTANCE="aes_seq_0" PORT="aclk"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="aclk"/>
             <CONNECTION INSTANCE="vtc_in" PORT="s_axi_aclk"/>
             <CONNECTION INSTANCE="axi_gpio_hdmiin" PORT="s_axi_aclk"/>
             <CONNECTION INSTANCE="ps7_axi_periph" PORT="M00_ACLK"/>
@@ -289,7 +290,7 @@
       <PARAMETERS>
         <PARAMETER NAME="C_S_AXI_ADDR_WIDTH" VALUE="8"/>
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_gcm_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_gcm_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
         <PARAMETER NAME="C_BASEADDR" VALUE="0x00000000"/>
         <PARAMETER NAME="C_HIGHADDR" VALUE="0x000001FF"/>
@@ -297,27 +298,27 @@
       <PORTS>
         <PORT DIR="O" LEFT="127" NAME="M_AXIS_CT_TDATA" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TDATA">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_SRC_TDATA"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="S_AXIS_TDATA"/>
           </CONNECTIONS>
         </PORT>
         <PORT DIR="O" LEFT="15" NAME="M_AXIS_CT_TKEEP" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TKEEP">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_SRC_TKEEP"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="S_AXIS_TKEEP"/>
           </CONNECTIONS>
         </PORT>
         <PORT DIR="O" NAME="M_AXIS_CT_TLAST" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TLAST">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_SRC_TLAST"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="S_AXIS_TLAST"/>
           </CONNECTIONS>
         </PORT>
         <PORT DIR="I" NAME="M_AXIS_CT_TREADY" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TREADY">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_SRC_TREADY"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="S_AXIS_TREADY"/>
           </CONNECTIONS>
         </PORT>
         <PORT DIR="O" NAME="M_AXIS_CT_TVALID" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TVALID">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_SRC_TVALID"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="S_AXIS_TVALID"/>
           </CONNECTIONS>
         </PORT>
         <PORT DIR="I" LEFT="127" NAME="S_AXIS_PT_TDATA" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_S_AXIS_PT_TDATA">
@@ -690,7 +691,7 @@
       <PARAMETERS>
         <PARAMETER NAME="C_AXI_ADDR_WIDTH" VALUE="9"/>
         <PARAMETER NAME="C_AXI_DATA_WIDTH" VALUE="32"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_seq_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_seq_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
         <PARAMETER NAME="C_BASEADDR" VALUE="0x40001000"/>
         <PARAMETER NAME="C_HIGHADDR" VALUE="0x40001FFF"/>
@@ -1072,6 +1073,11 @@
           </CONNECTIONS>
         </PORT>
         <PORT DIR="O" LEFT="63" NAME="nonce_counter_out" RIGHT="0" SIGIS="undef"/>
+        <PORT DIR="O" LEFT="63" NAME="pkt_nonce" RIGHT="0" SIGIS="undef" SIGNAME="aes_seq_0_pkt_nonce">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="pkt_nonce"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="I" LEFT="8" NAME="s_axi_araddr" RIGHT="0" SIGIS="undef" SIGNAME="aes_seq_0_s_axi_araddr">
           <CONNECTIONS>
             <CONNECTION INSTANCE="ps7_axi_periph" PORT="M03_AXI_araddr"/>
@@ -1541,7 +1547,7 @@
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
         <PARAMETER NAME="C_TRI_DEFAULT" VALUE="0xFFFFFFFF"/>
         <PARAMETER NAME="C_TRI_DEFAULT_2" VALUE="0xFFFFFFFF"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_clkctrl_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_clkctrl_1"/>
         <PARAMETER NAME="GPIO2_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="GPIO_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
@@ -1658,7 +1664,7 @@
           <PARAMETER NAME="ARUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="AWUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="BUSER_WIDTH" VALUE="0"/>
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK0"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK0"/>
           <PARAMETER NAME="DATA_WIDTH" VALUE="32"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_BRESP" VALUE="1"/>
@@ -1898,7 +1904,7 @@
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
         <PARAMETER NAME="C_TRI_DEFAULT" VALUE="0xFFFFFFFF"/>
         <PARAMETER NAME="C_TRI_DEFAULT_2" VALUE="0xFFFFFFFF"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_hdmiin_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_hdmiin_1"/>
         <PARAMETER NAME="GPIO2_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="GPIO_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
@@ -2086,7 +2092,7 @@
     <MODULE COREREVISION="1" FULLNAME="/cdc_out_probe_0" HWVERSION="1.0" INSTANCE="cdc_out_probe_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoBeatCounter_wrapper" VLNV="xilinx.com:module_ref:VideoBeatCounter_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_cdc_out_probe_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_cdc_out_probe_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -2525,7 +2531,7 @@
         <PARAMETER NAME="C_USE_STATUS" VALUE="0"/>
         <PARAMETER NAME="C_VCO_MAX" VALUE="1200.000"/>
         <PARAMETER NAME="C_VCO_MIN" VALUE="600.000"/>
-        <PARAMETER NAME="c_component_name" VALUE="hdmi_aes_tx_clk_wiz_aes_0"/>
+        <PARAMETER NAME="c_component_name" VALUE="hdmi_aes_tx_clk_wiz_aes_1"/>
         <PARAMETER NAME="AUTO_PRIMITIVE" VALUE="MMCM"/>
         <PARAMETER NAME="AXI_DRP" VALUE="false"/>
         <PARAMETER NAME="CALC_DONE" VALUE="empty"/>
@@ -2626,7 +2632,7 @@
         <PARAMETER NAME="CLK_OUT7_USE_FINE_PS_GUI" VALUE="false"/>
         <PARAMETER NAME="CLK_VALID_PORT" VALUE="CLK_VALID"/>
         <PARAMETER NAME="CLOCK_MGR_TYPE" VALUE="auto"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clk_wiz_aes_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clk_wiz_aes_1"/>
         <PARAMETER NAME="DADDR_PORT" VALUE="daddr"/>
         <PARAMETER NAME="DCLK_PORT" VALUE="dclk"/>
         <PARAMETER NAME="DEN_PORT" VALUE="den"/>
@@ -2814,7 +2820,7 @@
         <PARAMETER NAME="DIN_FROM" VALUE="0"/>
         <PARAMETER NAME="DIN_TO" VALUE="0"/>
         <PARAMETER NAME="DIN_WIDTH" VALUE="3"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_rst_slice_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_rst_slice_1"/>
         <PARAMETER NAME="DOUT_WIDTH" VALUE="1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
@@ -2838,7 +2844,7 @@
         <PARAMETER NAME="DIN_FROM" VALUE="2"/>
         <PARAMETER NAME="DIN_TO" VALUE="1"/>
         <PARAMETER NAME="DIN_WIDTH" VALUE="3"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_sel_slice_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_sel_slice_1"/>
         <PARAMETER NAME="DOUT_WIDTH" VALUE="2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
@@ -2861,7 +2867,7 @@
       <PARAMETERS>
         <PARAMETER NAME="input_format" VALUE="rbg"/>
         <PARAMETER NAME="output_format" VALUE="rgb"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_color_swap_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_color_swap_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -2931,13 +2937,13 @@
       </DOCUMENTS>
       <PARAMETERS>
         <PARAMETER NAME="kAddBUFG" VALUE="false"/>
-        <PARAMETER NAME="kClkRange" VALUE="1"/>
+        <PARAMETER NAME="kClkRange" VALUE="2"/>
         <PARAMETER NAME="kEdidFileName" VALUE="720p_edid.data"/>
         <PARAMETER NAME="kEmulateDDC" VALUE="true"/>
         <PARAMETER NAME="kIDLY_TapValuePs" VALUE="78"/>
         <PARAMETER NAME="kIDLY_TapWidth" VALUE="5"/>
         <PARAMETER NAME="kRstActiveHigh" VALUE="false"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_dvi2rgb_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_dvi2rgb_0_1"/>
         <PARAMETER NAME="IIC_BOARD_INTERFACE"/>
         <PARAMETER NAME="TMDS_BOARD_INTERFACE"/>
         <PARAMETER NAME="kEnableSerialClkOutput" VALUE="false"/>
@@ -3069,7 +3075,7 @@
         </BUSINTERFACE>
       </BUSINTERFACES>
     </MODULE>
-    <MODULE COREREVISION="1" FULLNAME="/frame_writer_0" HWVERSION="1.0" INSTANCE="frame_writer_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="AXI_PingPong_Ctrl_wrapper" VLNV="xilinx.com:module_ref:AXI_PingPong_Ctrl_wrapper:1.0">
+    <MODULE COREREVISION="1" FULLNAME="/frame_writer_0" HWVERSION="1.0" INSTANCE="frame_writer_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="DDRRingWriter_wrapper" VLNV="xilinx.com:module_ref:DDRRingWriter_wrapper:1.0">
       <DOCUMENTS/>
       <ADDRESSBLOCKS>
         <ADDRESSBLOCK ACCESS="" INTERFACE="S_AXI" NAME="reg0" RANGE="4096" USAGE="register"/>
@@ -3077,12 +3083,36 @@
       <PARAMETERS>
         <PARAMETER NAME="C_S_AXI_ADDR_WIDTH" VALUE="8"/>
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_frame_writer_0_0"/>
+        <PARAMETER NAME="PACKET_BYTES" VALUE="1240"/>
+        <PARAMETER NAME="RING_LOG2" VALUE="11"/>
+        <PARAMETER NAME="SLOT_STRIDE" VALUE="1280"/>
+        <PARAMETER NAME="VERSION_VALUE" VALUE="0x00020000"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_frame_writer_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
         <PARAMETER NAME="C_BASEADDR" VALUE="0x40000000"/>
         <PARAMETER NAME="C_HIGHADDR" VALUE="0x40000FFF"/>
       </PARAMETERS>
       <PORTS>
+        <PORT DIR="O" LEFT="31" NAME="M_AXI_ARADDR" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARADDR">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_araddr"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="2" NAME="M_AXI_ARPROT" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARPROT">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_arprot"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="M_AXI_ARREADY" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARREADY">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_arready"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="M_AXI_ARVALID" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARVALID">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_arvalid"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="O" LEFT="31" NAME="M_AXI_AWADDR" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_AWADDR">
           <CONNECTIONS>
             <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_awaddr"/>
@@ -3128,6 +3158,26 @@
             <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_bvalid"/>
           </CONNECTIONS>
         </PORT>
+        <PORT DIR="I" LEFT="31" NAME="M_AXI_RDATA" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RDATA">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_rdata"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="M_AXI_RREADY" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RREADY">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_rready"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="1" NAME="M_AXI_RRESP" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RRESP">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_rresp"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="M_AXI_RVALID" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RVALID">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_rvalid"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="O" LEFT="63" NAME="M_AXI_WDATA" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_WDATA">
           <CONNECTIONS>
             <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_wdata"/>
@@ -3153,29 +3203,29 @@
             <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_AXI_wvalid"/>
           </CONNECTIONS>
         </PORT>
-        <PORT DIR="I" LEFT="127" NAME="S_AXIS_SRC_TDATA" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TDATA">
+        <PORT DIR="I" LEFT="127" NAME="S_AXIS_TDATA" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TDATA">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TDATA"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="M_AXIS_TDATA"/>
           </CONNECTIONS>
         </PORT>
-        <PORT DIR="I" LEFT="15" NAME="S_AXIS_SRC_TKEEP" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TKEEP">
+        <PORT DIR="I" LEFT="15" NAME="S_AXIS_TKEEP" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TKEEP">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TKEEP"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="M_AXIS_TKEEP"/>
           </CONNECTIONS>
         </PORT>
-        <PORT DIR="I" NAME="S_AXIS_SRC_TLAST" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TLAST">
+        <PORT DIR="I" NAME="S_AXIS_TLAST" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TLAST">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TLAST"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="M_AXIS_TLAST"/>
           </CONNECTIONS>
         </PORT>
-        <PORT DIR="O" NAME="S_AXIS_SRC_TREADY" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TREADY">
+        <PORT DIR="O" NAME="S_AXIS_TREADY" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TREADY">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TREADY"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="M_AXIS_TREADY"/>
           </CONNECTIONS>
         </PORT>
-        <PORT DIR="I" NAME="S_AXIS_SRC_TVALID" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TVALID">
+        <PORT DIR="I" NAME="S_AXIS_TVALID" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TVALID">
           <CONNECTIONS>
-            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TVALID"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="M_AXIS_TVALID"/>
           </CONNECTIONS>
         </PORT>
         <PORT CLKFREQUENCY="100000000" DIR="I" NAME="S_AXI_ACLK" SIGIS="clk" SIGNAME="aes_clk_mux_clk_out">
@@ -3290,7 +3340,7 @@
         </PORT>
       </PORTS>
       <BUSINTERFACES>
-        <BUSINTERFACE BUSNAME="aes_gcm_0_M_AXIS_CT" NAME="S_AXIS_SRC" TYPE="TARGET" VLNV="xilinx.com:interface:axis:1.0">
+        <BUSINTERFACE BUSNAME="nonce_prefix_0_M_AXIS" NAME="S_AXIS" TYPE="TARGET" VLNV="xilinx.com:interface:axis:1.0">
           <PARAMETER NAME="CLK_DOMAIN"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="1"/>
@@ -3305,11 +3355,11 @@
           <PARAMETER NAME="TID_WIDTH" VALUE="0"/>
           <PARAMETER NAME="TUSER_WIDTH" VALUE="0"/>
           <PORTMAPS>
-            <PORTMAP LOGICAL="TDATA" PHYSICAL="S_AXIS_SRC_TDATA"/>
-            <PORTMAP LOGICAL="TKEEP" PHYSICAL="S_AXIS_SRC_TKEEP"/>
-            <PORTMAP LOGICAL="TLAST" PHYSICAL="S_AXIS_SRC_TLAST"/>
-            <PORTMAP LOGICAL="TREADY" PHYSICAL="S_AXIS_SRC_TREADY"/>
-            <PORTMAP LOGICAL="TVALID" PHYSICAL="S_AXIS_SRC_TVALID"/>
+            <PORTMAP LOGICAL="TDATA" PHYSICAL="S_AXIS_TDATA"/>
+            <PORTMAP LOGICAL="TKEEP" PHYSICAL="S_AXIS_TKEEP"/>
+            <PORTMAP LOGICAL="TLAST" PHYSICAL="S_AXIS_TLAST"/>
+            <PORTMAP LOGICAL="TREADY" PHYSICAL="S_AXIS_TREADY"/>
+            <PORTMAP LOGICAL="TVALID" PHYSICAL="S_AXIS_TVALID"/>
           </PORTMAPS>
         </BUSINTERFACE>
         <BUSINTERFACE BUSNAME="frame_writer_0_M_AXI" DATAWIDTH="64" NAME="M_AXI" TYPE="MASTER" VLNV="xilinx.com:interface:aximm:1.0">
@@ -3324,10 +3374,10 @@
           <PARAMETER NAME="HAS_BURST" VALUE="1"/>
           <PARAMETER NAME="HAS_CACHE" VALUE="0"/>
           <PARAMETER NAME="HAS_LOCK" VALUE="0"/>
-          <PARAMETER NAME="HAS_PROT" VALUE="0"/>
+          <PARAMETER NAME="HAS_PROT" VALUE="1"/>
           <PARAMETER NAME="HAS_QOS" VALUE="0"/>
           <PARAMETER NAME="HAS_REGION" VALUE="0"/>
-          <PARAMETER NAME="HAS_RRESP" VALUE="0"/>
+          <PARAMETER NAME="HAS_RRESP" VALUE="1"/>
           <PARAMETER NAME="HAS_WSTRB" VALUE="1"/>
           <PARAMETER NAME="ID_WIDTH" VALUE="0"/>
           <PARAMETER NAME="INSERT_VIP" VALUE="0"/>
@@ -3338,13 +3388,17 @@
           <PARAMETER NAME="NUM_WRITE_THREADS" VALUE="1"/>
           <PARAMETER NAME="PHASE" VALUE="0.0"/>
           <PARAMETER NAME="PROTOCOL" VALUE="AXI4"/>
-          <PARAMETER NAME="READ_WRITE_MODE" VALUE="WRITE_ONLY"/>
+          <PARAMETER NAME="READ_WRITE_MODE" VALUE="READ_WRITE"/>
           <PARAMETER NAME="RUSER_BITS_PER_BYTE" VALUE="0"/>
           <PARAMETER NAME="RUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="SUPPORTS_NARROW_BURST" VALUE="1"/>
           <PARAMETER NAME="WUSER_BITS_PER_BYTE" VALUE="0"/>
           <PARAMETER NAME="WUSER_WIDTH" VALUE="0"/>
           <PORTMAPS>
+            <PORTMAP LOGICAL="ARADDR" PHYSICAL="M_AXI_ARADDR"/>
+            <PORTMAP LOGICAL="ARPROT" PHYSICAL="M_AXI_ARPROT"/>
+            <PORTMAP LOGICAL="ARREADY" PHYSICAL="M_AXI_ARREADY"/>
+            <PORTMAP LOGICAL="ARVALID" PHYSICAL="M_AXI_ARVALID"/>
             <PORTMAP LOGICAL="AWADDR" PHYSICAL="M_AXI_AWADDR"/>
             <PORTMAP LOGICAL="AWBURST" PHYSICAL="M_AXI_AWBURST"/>
             <PORTMAP LOGICAL="AWLEN" PHYSICAL="M_AXI_AWLEN"/>
@@ -3354,6 +3408,10 @@
             <PORTMAP LOGICAL="BREADY" PHYSICAL="M_AXI_BREADY"/>
             <PORTMAP LOGICAL="BRESP" PHYSICAL="M_AXI_BRESP"/>
             <PORTMAP LOGICAL="BVALID" PHYSICAL="M_AXI_BVALID"/>
+            <PORTMAP LOGICAL="RDATA" PHYSICAL="M_AXI_RDATA"/>
+            <PORTMAP LOGICAL="RREADY" PHYSICAL="M_AXI_RREADY"/>
+            <PORTMAP LOGICAL="RRESP" PHYSICAL="M_AXI_RRESP"/>
+            <PORTMAP LOGICAL="RVALID" PHYSICAL="M_AXI_RVALID"/>
             <PORTMAP LOGICAL="WDATA" PHYSICAL="M_AXI_WDATA"/>
             <PORTMAP LOGICAL="WLAST" PHYSICAL="M_AXI_WLAST"/>
             <PORTMAP LOGICAL="WREADY" PHYSICAL="M_AXI_WREADY"/>
@@ -3445,7 +3503,7 @@
         <PARAMETER NAME="C_SYNCHRONIZER_STAGE" VALUE="3"/>
         <PARAMETER NAME="C_USE_ADV_FEATURES" VALUE="825241648"/>
         <PARAMETER NAME="ACLKEN_CONV_MODE" VALUE="0"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_axis_cdc_fifo_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_axis_cdc_fifo_1"/>
         <PARAMETER NAME="ENABLE_ECC" VALUE="0"/>
         <PARAMETER NAME="FIFO_DEPTH" VALUE="2048"/>
         <PARAMETER NAME="FIFO_MEMORY_TYPE" VALUE="auto"/>
@@ -3540,7 +3598,7 @@
       </PORTS>
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="video_beat_counter_0_m_axis_video" NAME="S_AXIS" TYPE="SLAVE" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -3589,7 +3647,7 @@
       <DOCUMENTS/>
       <PARAMETERS>
         <PARAMETER NAME="MAX_PAYLOAD_BYTES" VALUE="1200"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_packetizer_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_packetizer_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -3756,7 +3814,7 @@
         <DOCUMENT SOURCE="http://www.xilinx.com/cgi-bin/docs/ipdoc?c=axi_interconnect;v=v2_1;d=pg059-axi-interconnect.pdf"/>
       </DOCUMENTS>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hp0_mem_ic_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hp0_mem_ic_1"/>
         <PARAMETER NAME="ENABLE_ADVANCED_OPTIONS" VALUE="0"/>
         <PARAMETER NAME="ENABLE_PROTOCOL_CHECKERS" VALUE="0"/>
         <PARAMETER NAME="M00_HAS_DATA_FIFO" VALUE="0"/>
@@ -4094,6 +4152,56 @@
             <CONNECTION INSTANCE="rst_ps7_stable" PORT="peripheral_aresetn"/>
           </CONNECTIONS>
         </PORT>
+        <PORT DIR="O" LEFT="31" NAME="M00_AXI_araddr" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_araddr">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARADDR"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="1" NAME="M00_AXI_arburst" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arburst">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARBURST"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="3" NAME="M00_AXI_arcache" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arcache">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARCACHE"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="3" NAME="M00_AXI_arlen" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arlen">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARLEN"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="1" NAME="M00_AXI_arlock" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arlock">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARLOCK"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="2" NAME="M00_AXI_arprot" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arprot">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARPROT"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="3" NAME="M00_AXI_arqos" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arqos">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARQOS"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="M00_AXI_arready" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arready">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARREADY"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="2" NAME="M00_AXI_arsize" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arsize">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARSIZE"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="M00_AXI_arvalid" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arvalid">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_ARVALID"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="O" LEFT="31" NAME="M00_AXI_awaddr" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_awaddr">
           <CONNECTIONS>
             <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_AWADDR"/>
@@ -4159,6 +4267,31 @@
             <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_BVALID"/>
           </CONNECTIONS>
         </PORT>
+        <PORT DIR="I" LEFT="63" NAME="M00_AXI_rdata" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rdata">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_RDATA"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="M00_AXI_rlast" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rlast">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_RLAST"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="M00_AXI_rready" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rready">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_RREADY"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="1" NAME="M00_AXI_rresp" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rresp">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_RRESP"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="M00_AXI_rvalid" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rvalid">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_RVALID"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="O" LEFT="63" NAME="M00_AXI_wdata" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_wdata">
           <CONNECTIONS>
             <CONNECTION INSTANCE="ps7" PORT="S_AXI_HP0_WDATA"/>
@@ -4192,6 +4325,26 @@
         <PORT DIR="I" NAME="S00_ARESETN" SIGIS="rst" SIGNAME="rst_ps7_100m_peripheral_aresetn">
           <CONNECTIONS>
             <CONNECTION INSTANCE="rst_ps7_100m" PORT="peripheral_aresetn"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="31" NAME="S00_AXI_araddr" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARADDR">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_ARADDR"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="2" NAME="S00_AXI_arprot" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARPROT">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_ARPROT"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="S00_AXI_arready" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARREADY">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_ARREADY"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="S00_AXI_arvalid" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_ARVALID">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_ARVALID"/>
           </CONNECTIONS>
         </PORT>
         <PORT DIR="I" LEFT="31" NAME="S00_AXI_awaddr" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_AWADDR">
@@ -4239,6 +4392,26 @@
             <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_BVALID"/>
           </CONNECTIONS>
         </PORT>
+        <PORT DIR="O" LEFT="63" NAME="S00_AXI_rdata" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RDATA">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_RDATA"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="S00_AXI_rready" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RREADY">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_RREADY"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="1" NAME="S00_AXI_rresp" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RRESP">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_RRESP"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="S00_AXI_rvalid" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_RVALID">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_RVALID"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="I" LEFT="63" NAME="S00_AXI_wdata" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_M_AXI_WDATA">
           <CONNECTIONS>
             <CONNECTION INSTANCE="frame_writer_0" PORT="M_AXI_WDATA"/>
@@ -4268,6 +4441,10 @@
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="frame_writer_0_M_AXI" DATAWIDTH="64" NAME="S00_AXI" TYPE="SLAVE" VLNV="xilinx.com:interface:aximm:1.0">
           <PORTMAPS>
+            <PORTMAP LOGICAL="ARADDR" PHYSICAL="S00_AXI_araddr"/>
+            <PORTMAP LOGICAL="ARPROT" PHYSICAL="S00_AXI_arprot"/>
+            <PORTMAP LOGICAL="ARREADY" PHYSICAL="S00_AXI_arready"/>
+            <PORTMAP LOGICAL="ARVALID" PHYSICAL="S00_AXI_arvalid"/>
             <PORTMAP LOGICAL="AWADDR" PHYSICAL="S00_AXI_awaddr"/>
             <PORTMAP LOGICAL="AWBURST" PHYSICAL="S00_AXI_awburst"/>
             <PORTMAP LOGICAL="AWLEN" PHYSICAL="S00_AXI_awlen"/>
@@ -4277,6 +4454,10 @@
             <PORTMAP LOGICAL="BREADY" PHYSICAL="S00_AXI_bready"/>
             <PORTMAP LOGICAL="BRESP" PHYSICAL="S00_AXI_bresp"/>
             <PORTMAP LOGICAL="BVALID" PHYSICAL="S00_AXI_bvalid"/>
+            <PORTMAP LOGICAL="RDATA" PHYSICAL="S00_AXI_rdata"/>
+            <PORTMAP LOGICAL="RREADY" PHYSICAL="S00_AXI_rready"/>
+            <PORTMAP LOGICAL="RRESP" PHYSICAL="S00_AXI_rresp"/>
+            <PORTMAP LOGICAL="RVALID" PHYSICAL="S00_AXI_rvalid"/>
             <PORTMAP LOGICAL="WDATA" PHYSICAL="S00_AXI_wdata"/>
             <PORTMAP LOGICAL="WLAST" PHYSICAL="S00_AXI_wlast"/>
             <PORTMAP LOGICAL="WREADY" PHYSICAL="S00_AXI_wready"/>
@@ -4286,6 +4467,16 @@
         </BUSINTERFACE>
         <BUSINTERFACE BUSNAME="hp0_mem_ic_M00_AXI" DATAWIDTH="64" NAME="M00_AXI" TYPE="MASTER" VLNV="xilinx.com:interface:aximm:1.0">
           <PORTMAPS>
+            <PORTMAP LOGICAL="ARADDR" PHYSICAL="M00_AXI_araddr"/>
+            <PORTMAP LOGICAL="ARBURST" PHYSICAL="M00_AXI_arburst"/>
+            <PORTMAP LOGICAL="ARCACHE" PHYSICAL="M00_AXI_arcache"/>
+            <PORTMAP LOGICAL="ARLEN" PHYSICAL="M00_AXI_arlen"/>
+            <PORTMAP LOGICAL="ARLOCK" PHYSICAL="M00_AXI_arlock"/>
+            <PORTMAP LOGICAL="ARPROT" PHYSICAL="M00_AXI_arprot"/>
+            <PORTMAP LOGICAL="ARQOS" PHYSICAL="M00_AXI_arqos"/>
+            <PORTMAP LOGICAL="ARREADY" PHYSICAL="M00_AXI_arready"/>
+            <PORTMAP LOGICAL="ARSIZE" PHYSICAL="M00_AXI_arsize"/>
+            <PORTMAP LOGICAL="ARVALID" PHYSICAL="M00_AXI_arvalid"/>
             <PORTMAP LOGICAL="AWADDR" PHYSICAL="M00_AXI_awaddr"/>
             <PORTMAP LOGICAL="AWBURST" PHYSICAL="M00_AXI_awburst"/>
             <PORTMAP LOGICAL="AWCACHE" PHYSICAL="M00_AXI_awcache"/>
@@ -4299,6 +4490,11 @@
             <PORTMAP LOGICAL="BREADY" PHYSICAL="M00_AXI_bready"/>
             <PORTMAP LOGICAL="BRESP" PHYSICAL="M00_AXI_bresp"/>
             <PORTMAP LOGICAL="BVALID" PHYSICAL="M00_AXI_bvalid"/>
+            <PORTMAP LOGICAL="RDATA" PHYSICAL="M00_AXI_rdata"/>
+            <PORTMAP LOGICAL="RLAST" PHYSICAL="M00_AXI_rlast"/>
+            <PORTMAP LOGICAL="RREADY" PHYSICAL="M00_AXI_rready"/>
+            <PORTMAP LOGICAL="RRESP" PHYSICAL="M00_AXI_rresp"/>
+            <PORTMAP LOGICAL="RVALID" PHYSICAL="M00_AXI_rvalid"/>
             <PORTMAP LOGICAL="WDATA" PHYSICAL="M00_AXI_wdata"/>
             <PORTMAP LOGICAL="WLAST" PHYSICAL="M00_AXI_wlast"/>
             <PORTMAP LOGICAL="WREADY" PHYSICAL="M00_AXI_wready"/>
@@ -4441,7 +4637,7 @@
         <PARAMETER NAME="IN9_WIDTH" VALUE="1"/>
         <PARAMETER NAME="NUM_PORTS" VALUE="3"/>
         <PARAMETER NAME="dout_width" VALUE="3"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_irq_concat_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_irq_concat_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -4468,6 +4664,126 @@
       </PORTS>
       <BUSINTERFACES/>
     </MODULE>
+    <MODULE COREREVISION="1" FULLNAME="/nonce_prefix_0" HWVERSION="1.0" INSTANCE="nonce_prefix_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="NoncePrefixInject_wrapper" VLNV="xilinx.com:module_ref:NoncePrefixInject_wrapper:1.0">
+      <DOCUMENTS/>
+      <PARAMETERS>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_nonce_prefix_0_0"/>
+        <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
+      </PARAMETERS>
+      <PORTS>
+        <PORT DIR="O" LEFT="127" NAME="M_AXIS_TDATA" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TDATA">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_TDATA"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="15" NAME="M_AXIS_TKEEP" RIGHT="0" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TKEEP">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_TKEEP"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="M_AXIS_TLAST" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TLAST">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_TLAST"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="M_AXIS_TREADY" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TREADY">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_TREADY"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="M_AXIS_TVALID" SIGIS="undef" SIGNAME="frame_writer_0_S_AXIS_TVALID">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXIS_TVALID"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="127" NAME="S_AXIS_TDATA" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TDATA">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TDATA"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="15" NAME="S_AXIS_TKEEP" RIGHT="0" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TKEEP">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TKEEP"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="S_AXIS_TLAST" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TLAST">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TLAST"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="S_AXIS_TREADY" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TREADY">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TREADY"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="S_AXIS_TVALID" SIGIS="undef" SIGNAME="aes_gcm_0_M_AXIS_CT_TVALID">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_gcm_0" PORT="M_AXIS_CT_TVALID"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT CLKFREQUENCY="100000000" DIR="I" NAME="aclk" SIGIS="clk" SIGNAME="aes_clk_mux_clk_out">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_clk_mux" PORT="clk_out"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="aresetn" POLARITY="ACTIVE_LOW" SIGIS="rst" SIGNAME="rst_ps7_100m_peripheral_aresetn">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="rst_ps7_100m" PORT="peripheral_aresetn"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="63" NAME="pkt_nonce" RIGHT="0" SIGIS="undef" SIGNAME="aes_seq_0_pkt_nonce">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="aes_seq_0" PORT="pkt_nonce"/>
+          </CONNECTIONS>
+        </PORT>
+      </PORTS>
+      <BUSINTERFACES>
+        <BUSINTERFACE BUSNAME="nonce_prefix_0_M_AXIS" NAME="M_AXIS" TYPE="INITIATOR" VLNV="xilinx.com:interface:axis:1.0">
+          <PARAMETER NAME="CLK_DOMAIN"/>
+          <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
+          <PARAMETER NAME="HAS_TKEEP" VALUE="1"/>
+          <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
+          <PARAMETER NAME="HAS_TREADY" VALUE="1"/>
+          <PARAMETER NAME="HAS_TSTRB" VALUE="0"/>
+          <PARAMETER NAME="INSERT_VIP" VALUE="0"/>
+          <PARAMETER NAME="LAYERED_METADATA" VALUE="undef"/>
+          <PARAMETER NAME="PHASE" VALUE="0.0"/>
+          <PARAMETER NAME="TDATA_NUM_BYTES" VALUE="16"/>
+          <PARAMETER NAME="TDEST_WIDTH" VALUE="0"/>
+          <PARAMETER NAME="TID_WIDTH" VALUE="0"/>
+          <PARAMETER NAME="TUSER_WIDTH" VALUE="0"/>
+          <PORTMAPS>
+            <PORTMAP LOGICAL="TDATA" PHYSICAL="M_AXIS_TDATA"/>
+            <PORTMAP LOGICAL="TKEEP" PHYSICAL="M_AXIS_TKEEP"/>
+            <PORTMAP LOGICAL="TLAST" PHYSICAL="M_AXIS_TLAST"/>
+            <PORTMAP LOGICAL="TREADY" PHYSICAL="M_AXIS_TREADY"/>
+            <PORTMAP LOGICAL="TVALID" PHYSICAL="M_AXIS_TVALID"/>
+          </PORTMAPS>
+        </BUSINTERFACE>
+        <BUSINTERFACE BUSNAME="aes_gcm_0_M_AXIS_CT" NAME="S_AXIS" TYPE="TARGET" VLNV="xilinx.com:interface:axis:1.0">
+          <PARAMETER NAME="CLK_DOMAIN"/>
+          <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
+          <PARAMETER NAME="HAS_TKEEP" VALUE="1"/>
+          <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
+          <PARAMETER NAME="HAS_TREADY" VALUE="1"/>
+          <PARAMETER NAME="HAS_TSTRB" VALUE="0"/>
+          <PARAMETER NAME="INSERT_VIP" VALUE="0"/>
+          <PARAMETER NAME="LAYERED_METADATA" VALUE="undef"/>
+          <PARAMETER NAME="PHASE" VALUE="0.0"/>
+          <PARAMETER NAME="TDATA_NUM_BYTES" VALUE="16"/>
+          <PARAMETER NAME="TDEST_WIDTH" VALUE="0"/>
+          <PARAMETER NAME="TID_WIDTH" VALUE="0"/>
+          <PARAMETER NAME="TUSER_WIDTH" VALUE="0"/>
+          <PORTMAPS>
+            <PORTMAP LOGICAL="TDATA" PHYSICAL="S_AXIS_TDATA"/>
+            <PORTMAP LOGICAL="TKEEP" PHYSICAL="S_AXIS_TKEEP"/>
+            <PORTMAP LOGICAL="TLAST" PHYSICAL="S_AXIS_TLAST"/>
+            <PORTMAP LOGICAL="TREADY" PHYSICAL="S_AXIS_TREADY"/>
+            <PORTMAP LOGICAL="TVALID" PHYSICAL="S_AXIS_TVALID"/>
+          </PORTMAPS>
+        </BUSINTERFACE>
+      </BUSINTERFACES>
+    </MODULE>
     <MODULE COREREVISION="14" FULLNAME="/packet_seq_fifo_0" HWVERSION="2.0" INSTANCE="packet_seq_fifo_0" IPTYPE="BUS" IS_ENABLE="1" MODCLASS="BUS" MODTYPE="axis_data_fifo" VLNV="xilinx.com:ip:axis_data_fifo:2.0">
       <DOCUMENTS>
         <DOCUMENT SOURCE="https://www.xilinx.com/cgi-bin/docs/ipdoc?c=axis_data_fifo;v=v2_0;d=pg085-axi4stream-infrastructure.pdf"/>
@@ -4490,7 +4806,7 @@
         <PARAMETER NAME="C_SYNCHRONIZER_STAGE" VALUE="3"/>
         <PARAMETER NAME="C_USE_ADV_FEATURES" VALUE="826486851"/>
         <PARAMETER NAME="ACLKEN_CONV_MODE" VALUE="0"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_packet_seq_fifo_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_packet_seq_fifo_0_1"/>
         <PARAMETER NAME="ENABLE_ECC" VALUE="0"/>
         <PARAMETER NAME="FIFO_DEPTH" VALUE="256"/>
         <PARAMETER NAME="FIFO_MEMORY_TYPE" VALUE="auto"/>
@@ -4699,7 +5015,7 @@
         <PARAMETER NAME="C_USE_S_AXI_HP2" VALUE="0"/>
         <PARAMETER NAME="C_USE_S_AXI_HP3" VALUE="0"/>
         <PARAMETER NAME="USE_TRACE_DATA_EDGE_DETECTOR" VALUE="0"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_1"/>
         <PARAMETER NAME="PCW_ACT_APU_PERIPHERAL_FREQMHZ" VALUE="666.666687"/>
         <PARAMETER NAME="PCW_ACT_CAN0_PERIPHERAL_FREQMHZ" VALUE="23.8095"/>
         <PARAMETER NAME="PCW_ACT_CAN1_PERIPHERAL_FREQMHZ" VALUE="23.8095"/>
@@ -5925,6 +6241,56 @@
             <CONNECTION INSTANCE="ps7" PORT="FCLK_CLK0"/>
           </CONNECTIONS>
         </PORT>
+        <PORT DIR="I" LEFT="31" NAME="S_AXI_HP0_ARADDR" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_araddr">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_araddr"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="1" NAME="S_AXI_HP0_ARBURST" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arburst">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arburst"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="3" NAME="S_AXI_HP0_ARCACHE" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arcache">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arcache"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="3" NAME="S_AXI_HP0_ARLEN" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arlen">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arlen"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="1" NAME="S_AXI_HP0_ARLOCK" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arlock">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arlock"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="2" NAME="S_AXI_HP0_ARPROT" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arprot">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arprot"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="3" NAME="S_AXI_HP0_ARQOS" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arqos">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arqos"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="S_AXI_HP0_ARREADY" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arready">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arready"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" LEFT="2" NAME="S_AXI_HP0_ARSIZE" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arsize">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arsize"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="S_AXI_HP0_ARVALID" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_arvalid">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_arvalid"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="I" LEFT="31" NAME="S_AXI_HP0_AWADDR" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_awaddr">
           <CONNECTIONS>
             <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_awaddr"/>
@@ -5992,7 +6358,32 @@
         </PORT>
         <PORT DIR="O" LEFT="2" NAME="S_AXI_HP0_RACOUNT" RIGHT="0" SIGIS="undef"/>
         <PORT DIR="O" LEFT="7" NAME="S_AXI_HP0_RCOUNT" RIGHT="0" SIGIS="undef"/>
+        <PORT DIR="O" LEFT="63" NAME="S_AXI_HP0_RDATA" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rdata">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_rdata"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="I" NAME="S_AXI_HP0_RDISSUECAP1_EN" SIGIS="undef"/>
+        <PORT DIR="O" NAME="S_AXI_HP0_RLAST" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rlast">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_rlast"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="I" NAME="S_AXI_HP0_RREADY" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rready">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_rready"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" LEFT="1" NAME="S_AXI_HP0_RRESP" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rresp">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_rresp"/>
+          </CONNECTIONS>
+        </PORT>
+        <PORT DIR="O" NAME="S_AXI_HP0_RVALID" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_rvalid">
+          <CONNECTIONS>
+            <CONNECTION INSTANCE="hp0_mem_ic" PORT="M00_AXI_rvalid"/>
+          </CONNECTIONS>
+        </PORT>
         <PORT DIR="O" LEFT="5" NAME="S_AXI_HP0_WACOUNT" RIGHT="0" SIGIS="undef"/>
         <PORT DIR="O" LEFT="7" NAME="S_AXI_HP0_WCOUNT" RIGHT="0" SIGIS="undef"/>
         <PORT DIR="I" LEFT="63" NAME="S_AXI_HP0_WDATA" RIGHT="0" SIGIS="undef" SIGNAME="hp0_mem_ic_M00_AXI_wdata">
@@ -6082,7 +6473,7 @@
           <PARAMETER NAME="ARUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="AWUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="BUSER_WIDTH" VALUE="0"/>
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK0"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK0"/>
           <PARAMETER NAME="DATA_WIDTH" VALUE="32"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_BRESP" VALUE="1"/>
@@ -6155,7 +6546,7 @@
           <PARAMETER NAME="ARUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="AWUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="BUSER_WIDTH" VALUE="0"/>
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK0"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK0"/>
           <PARAMETER NAME="DATA_WIDTH" VALUE="64"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_BRESP" VALUE="1"/>
@@ -6183,6 +6574,16 @@
           <PARAMETER NAME="WUSER_BITS_PER_BYTE" VALUE="0"/>
           <PARAMETER NAME="WUSER_WIDTH" VALUE="0"/>
           <PORTMAPS>
+            <PORTMAP LOGICAL="ARADDR" PHYSICAL="S_AXI_HP0_ARADDR"/>
+            <PORTMAP LOGICAL="ARBURST" PHYSICAL="S_AXI_HP0_ARBURST"/>
+            <PORTMAP LOGICAL="ARCACHE" PHYSICAL="S_AXI_HP0_ARCACHE"/>
+            <PORTMAP LOGICAL="ARLEN" PHYSICAL="S_AXI_HP0_ARLEN"/>
+            <PORTMAP LOGICAL="ARLOCK" PHYSICAL="S_AXI_HP0_ARLOCK"/>
+            <PORTMAP LOGICAL="ARPROT" PHYSICAL="S_AXI_HP0_ARPROT"/>
+            <PORTMAP LOGICAL="ARQOS" PHYSICAL="S_AXI_HP0_ARQOS"/>
+            <PORTMAP LOGICAL="ARREADY" PHYSICAL="S_AXI_HP0_ARREADY"/>
+            <PORTMAP LOGICAL="ARSIZE" PHYSICAL="S_AXI_HP0_ARSIZE"/>
+            <PORTMAP LOGICAL="ARVALID" PHYSICAL="S_AXI_HP0_ARVALID"/>
             <PORTMAP LOGICAL="AWADDR" PHYSICAL="S_AXI_HP0_AWADDR"/>
             <PORTMAP LOGICAL="AWBURST" PHYSICAL="S_AXI_HP0_AWBURST"/>
             <PORTMAP LOGICAL="AWCACHE" PHYSICAL="S_AXI_HP0_AWCACHE"/>
@@ -6196,6 +6597,11 @@
             <PORTMAP LOGICAL="BREADY" PHYSICAL="S_AXI_HP0_BREADY"/>
             <PORTMAP LOGICAL="BRESP" PHYSICAL="S_AXI_HP0_BRESP"/>
             <PORTMAP LOGICAL="BVALID" PHYSICAL="S_AXI_HP0_BVALID"/>
+            <PORTMAP LOGICAL="RDATA" PHYSICAL="S_AXI_HP0_RDATA"/>
+            <PORTMAP LOGICAL="RLAST" PHYSICAL="S_AXI_HP0_RLAST"/>
+            <PORTMAP LOGICAL="RREADY" PHYSICAL="S_AXI_HP0_RREADY"/>
+            <PORTMAP LOGICAL="RRESP" PHYSICAL="S_AXI_HP0_RRESP"/>
+            <PORTMAP LOGICAL="RVALID" PHYSICAL="S_AXI_HP0_RVALID"/>
             <PORTMAP LOGICAL="WDATA" PHYSICAL="S_AXI_HP0_WDATA"/>
             <PORTMAP LOGICAL="WLAST" PHYSICAL="S_AXI_HP0_WLAST"/>
             <PORTMAP LOGICAL="WREADY" PHYSICAL="S_AXI_HP0_WREADY"/>
@@ -6224,7 +6630,7 @@
         <DOCUMENT SOURCE="http://www.xilinx.com/cgi-bin/docs/ipdoc?c=axi_interconnect;v=v2_1;d=pg059-axi-interconnect.pdf"/>
       </DOCUMENTS>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_axi_periph_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_axi_periph_1"/>
         <PARAMETER NAME="ENABLE_ADVANCED_OPTIONS" VALUE="0"/>
         <PARAMETER NAME="ENABLE_PROTOCOL_CHECKERS" VALUE="0"/>
         <PARAMETER NAME="M00_HAS_DATA_FIFO" VALUE="0"/>
@@ -7407,7 +7813,7 @@
       <PARAMETERS>
         <PARAMETER NAME="CONST_VAL" VALUE="0x1"/>
         <PARAMETER NAME="CONST_WIDTH" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_const1_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_const1_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -7436,7 +7842,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_pixelclk_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_pixelclk_1"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -7495,7 +7901,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_100m_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_100m_1"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -7529,6 +7935,7 @@
             <CONNECTION INSTANCE="hp0_mem_ic" PORT="S00_ARESETN"/>
             <CONNECTION INSTANCE="aes_gcm_0" PORT="S_AXI_ARESETN"/>
             <CONNECTION INSTANCE="frame_writer_0" PORT="S_AXI_ARESETN"/>
+            <CONNECTION INSTANCE="nonce_prefix_0" PORT="aresetn"/>
             <CONNECTION INSTANCE="aes_seq_0" PORT="aresetn"/>
             <CONNECTION INSTANCE="vtc_in" PORT="s_axi_aresetn"/>
             <CONNECTION INSTANCE="axi_gpio_hdmiin" PORT="s_axi_aresetn"/>
@@ -7565,7 +7972,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_142m_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_142m_1"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -7617,7 +8024,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_stable_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_stable_1"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -7663,7 +8070,7 @@
       <PARAMETERS>
         <PARAMETER NAME="C_OPERATION" VALUE="not"/>
         <PARAMETER NAME="C_SIZE" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rstn_to_rst_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rstn_to_rst_1"/>
         <PARAMETER NAME="LOGO_FILE" VALUE="data/sym_notgate.png"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
@@ -7704,7 +8111,7 @@
         <PARAMETER NAME="C_VID_NATIVE_DE" VALUE="0"/>
         <PARAMETER NAME="C_M_AXIS_VIDEO_DATA_WIDTH" VALUE="8"/>
         <PARAMETER NAME="C_M_AXIS_VIDEO_FORMAT" VALUE="2"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_v_vid_in_axi4s_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_v_vid_in_axi4s_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -7806,7 +8213,7 @@
       </PORTS>
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="v_vid_in_axi4s_0_video_out" NAME="video_out" TYPE="INITIATOR" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -7847,7 +8254,7 @@
     <MODULE COREREVISION="1" FULLNAME="/video_beat_counter_0" HWVERSION="1.0" INSTANCE="video_beat_counter_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoBeatCounter_wrapper" VLNV="xilinx.com:module_ref:VideoBeatCounter_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_beat_counter_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_beat_counter_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -7929,7 +8336,7 @@
       </PORTS>
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="video_beat_counter_0_m_axis_video" NAME="m_axis_video" TYPE="MASTER" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -7951,7 +8358,7 @@
           </PORTMAPS>
         </BUSINTERFACE>
         <BUSINTERFACE BUSNAME="v_vid_in_axi4s_0_video_out" NAME="s_axis_video" TYPE="TARGET" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_0_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -7977,7 +8384,7 @@
     <MODULE COREREVISION="1" FULLNAME="/video_fe_probe_0" HWVERSION="1.0" INSTANCE="video_fe_probe_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoFrontEndProbe_wrapper" VLNV="xilinx.com:module_ref:VideoFrontEndProbe_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_fe_probe_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_fe_probe_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -8069,7 +8476,7 @@
     <MODULE COREREVISION="1" FULLNAME="/video_status_probe_0" HWVERSION="1.0" INSTANCE="video_status_probe_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoStatusProbe_wrapper" VLNV="xilinx.com:module_ref:VideoStatusProbe_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_status_probe_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_status_probe_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -8215,7 +8622,7 @@
         <PARAMETER NAME="C_VID_PPC" VALUE="4"/>
         <PARAMETER NAME="ARBITRARY_RES_EN" VALUE="false"/>
         <PARAMETER NAME="C_FAMILY" VALUE="virtex7"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_vtc_in_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_vtc_in_1"/>
         <PARAMETER NAME="DET_FIELDID_EN" VALUE="false"/>
         <PARAMETER NAME="FSYNC_HSTART0" VALUE="0"/>
         <PARAMETER NAME="FSYNC_HSTART1" VALUE="0"/>
