@@ -15,6 +15,7 @@ from typing import Dict, Optional
 
 import yaml
 
+from protocol.constants import AUTHENTICATED_BODY_BYTES, TRANSPORT_SLOT_BYTES
 from protocol.packet_schema import split_datagram, pack_header, unpack_header
 from protocol.validation import validate_header, validate_nonce_monotonic, validate_replay_window
 
@@ -46,11 +47,19 @@ except ImportError:
 
 
 def _nonce(counter: int) -> bytes:
-    """Generate monotonic nonce matching TX side format.
-    
-    Must match pynq/runtime/main.py for validation.
-    """
+    """Generate monotonic nonce matching TX side format."""
     return b"\x00\x00\x00\x01" + counter.to_bytes(8, "big")
+
+
+def strip_transport_padding(datagram: bytes) -> bytes:
+    """Remove the unauthenticated B.2/B.3 tail from one GSO segment."""
+    if len(datagram) != TRANSPORT_SLOT_BYTES:
+        raise ValueError(
+            f"B.3 segment size mismatch: expected {TRANSPORT_SLOT_BYTES}, got {len(datagram)}"
+        )
+    if any(datagram[AUTHENTICATED_BODY_BYTES:]):
+        raise ValueError("B.3 transport padding is not zero")
+    return datagram[:AUTHENTICATED_BODY_BYTES]
 
 
 class NonceValidator:
@@ -151,6 +160,7 @@ def main() -> None:
     # Create UDP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, config.network.recv_buffer_bytes)
     sock.bind((config.network.bind_ip, config.network.rx_port))
     
     completed = 0
@@ -164,10 +174,20 @@ def main() -> None:
                 print(f"RX timeout; incomplete={completed}/{args.max_frames}")
                 break
             
-            # PL packets: the PL encrypts header+payload together (AAD=0) and
-            # the TX daemon prepends an 8-byte cleartext nonce prefix. Detect by
-            # the missing OSV magic at offset 0, decrypt, then parse the header
-            # from the recovered plaintext and reuse the normal pipeline.
+            # B.3 sends one complete 1280-byte slot per UDP segment. The
+            # final 40 bytes are explicit transport padding and are outside
+            # the GCM body. Remove and validate them before parsing the nonce,
+            # ciphertext, and tag. Legacy non-padded datagrams remain valid.
+            if len(datagram) == TRANSPORT_SLOT_BYTES:
+                try:
+                    datagram = strip_transport_padding(datagram)
+                except ValueError:
+                    dropped += 1
+                    continue
+
+            # PL packets encrypt header+payload with AAD=0 and carry an
+            # 8-byte cleartext nonce prefix. Detect by the missing OSV magic,
+            # decrypt, then parse the recovered plaintext header.
             is_pl_format = len(datagram) >= 40 and datagram[0:2] != b"\x4f\x56"
             if is_pl_format:
                 try:
@@ -179,18 +199,18 @@ def main() -> None:
                     pl_plain = crypto.decrypt(_nonce(nonce_prefix), b"", pl_ct, pl_tag)
                     if len(pl_plain) < 40:
                         raise ValueError("decrypted plaintext too short")
-                    # Inner plaintext = OSV header + segment payload (no inner
-                    # tag; the outer GCM tag already authenticated everything).
+                    # Inner plaintext = OSV header + segment payload. The
+                    # outer GCM tag authenticated the full encrypted body.
                     header = unpack_header(pl_plain[:40])
                     payload = pl_plain[40:]
                     tag = pl_tag
-                except Exception as exc:
+                except Exception:
                     dropped += 1
                     continue
             else:
                 try:
                     header, payload, tag = split_datagram(datagram)
-                except Exception as exc:
+                except Exception:
                     dropped += 1
                     continue
             

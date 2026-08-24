@@ -8,8 +8,13 @@ so a failing packet can be correlated with the board's rd_dbg.py dump.
 Usage: python tag_ladder_monitor.py <minutes> <label>
 """
 import socket, subprocess, sys, time
+from pathlib import Path
+
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from protocol.constants import AUTHENTICATED_BODY_BYTES, TRANSPORT_SLOT_BYTES
 
 KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
 R = 0xE1000000000000000000000000000000
@@ -48,8 +53,18 @@ def main():
             d, _ = s.recvfrom(65535)
         except socket.timeout:
             continue
-        p = int.from_bytes(d[:8], "big")
-        ct, wt = d[8:-16], d[-16:]
+        if len(d) != TRANSPORT_SLOT_BYTES:
+            bad += 1
+            print("FAIL unexpected datagram length=%d (want %d)" %
+                  (len(d), TRANSPORT_SLOT_BYTES))
+            continue
+        if any(d[AUTHENTICATED_BODY_BYTES:]):
+            bad += 1
+            print("FAIL non-zero transport padding")
+            continue
+        body = d[:AUTHENTICATED_BODY_BYTES]
+        p = int.from_bytes(body[:8], "big")
+        ct, wt = body[8:-16], body[-16:]
         n = b"\x00\x00\x00\x01" + p.to_bytes(8, "big")
         try:
             AESGCM(KEY).decrypt(n, ct + wt, b"")

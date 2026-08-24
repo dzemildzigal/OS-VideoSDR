@@ -1,26 +1,27 @@
 #define _GNU_SOURCE
 /*
- * tx_shim.c - C sender that replicates tx_daemon.py's send loop 1:1.
+ * tx_shim.c - B.3 PYNQ PS sender for the DDR packet ring.
  *
- * Expected setup: tx_daemon.py runs with --configure-only. It loads the
- * overlay, programs the sequencer (key/nonce/session), configures the
- * frame_writer buffers, and then waits. This program reads the buffer
- * physical addresses back from the writer registers, mmaps them via
- * /dev/mem, and drains ready frames exactly like the Python loop:
+ * The daemon allocates one physically contiguous ring and one separate
+ * control page, then programs both physical addresses into frame_writer_0.
+ * This process maps those regions, enables the sequencer, and sends complete
+ * 1280-byte ring slots with UDP_SEGMENT=1280. The kernel emits one UDP packet
+ * per slot. The first 1240 bytes are the authenticated B.1 body; bytes
+ * 1240..1279 are deliberate unauthenticated transport padding.
  *
- *   mask = READY_MASK & 3
- *   both_ready = (mask & 3) == 3
- *   buf0 -> prefix = nonce_now - 2   (when both ready)
- *   buf1 -> prefix = nonce_now - 1   (always)
- *   datagram = 8-byte big-endian nonce prefix + buffer[0..nbytes)
+ * Normal path:
+ *   read control.produce_idx
+ *   invalidate one contiguous batch range
+ *   send(sock, ring_slots, count * 1280, 0)
+ *   release-store control.consume_idx
  *
- * Wire format per packet: [8B nonce prefix][1216B CT][16B tag] = 1240B.
+ * A batch never contains a partial slot. A ring-wrap batch uses two GSO
+ * sends, one for each contiguous range. The old per-buffer nonce-prefix,
+ * copy, sendmmsg, and MMIO-ack path is not used.
  *
- * Phase 0 instrumentation: per-step nanosecond timers (wait/cache/copy/
- * send/ack) printed once per second, plus optional no-send modes.
- *   argv[3]: "send"   (default) full path
- *            "nosend" cache+copy+ack, skip sendto
- *            "nocopy" ack only, skip cache/copy/sendto (writer ceiling)
+ * argv compatibility:
+ *   tx_shim [dst-ip] [dst-port] [send|nosend|nocopy]
+ *   tx_shim --dst-host IP --dst-port PORT [--mode send|nosend|nocopy]
  */
 
 #include <arpa/inet.h>
@@ -28,44 +29,58 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <netinet/in.h>
+#include <sched.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sched.h>
-#include <sys/resource.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <time.h>
 #include <unistd.h>
 
-#define WRITER_BASE 0x40000000u
-#define SEQ_BASE    0x40001000u
+#ifndef UDP_SEGMENT
+#define UDP_SEGMENT 103
+#endif
 
-#define REG_READY_MASK       0x0018u
-#define REG_CONSUMED_MASK    0x001Cu
-#define REG_VALID_BYTES_BUF0 0x0028u
-#define REG_VALID_BYTES_BUF1 0x002Cu
-#define REG_DROP_COUNT       0x0030u
-#define REG_IRQ_STATUS       0x0038u
-#define REG_FRAME_ID_BUF0    0x0020u
-#define REG_FRAME_ID_BUF1    0x0024u
-#define REG_BUF0_ADDR_LO     0x0044u
-#define REG_BUF0_ADDR_HI     0x0048u
-#define REG_BUF1_ADDR_LO     0x004Cu
-#define REG_BUF1_ADDR_HI     0x0050u
+#define WRITER_BASE 0x40000000ULL
+#define SEQ_BASE    0x40001000ULL
 
-#define REG_NONCE_HI 0x0040u
-#define REG_NONCE_LO 0x0044u
+/* DDRRingWriter AXI-Lite register map. */
+#define REG_WRITER_CONTROL      0x0004u
+#define REG_WRITER_STATUS       0x0008u
+#define REG_RING_BASE_LO        0x000Cu
+#define REG_RING_BASE_HI        0x0010u
+#define REG_CTRL_BASE_LO        0x0014u
+#define REG_CTRL_BASE_HI        0x0018u
+#define REG_RING_LOG2           0x001Cu
+#define REG_SLOT_STRIDE         0x0020u
+#define REG_PRODUCE_IDX         0x0024u
+#define REG_CONSUME_SHADOW      0x0028u
+#define REG_DROP_COUNT          0x002Cu
+#define REG_COMPLETE_COUNT_LO   0x0030u
+#define REG_COMPLETE_COUNT_HI   0x0034u
+#define REG_FAULT_CODE          0x003Cu
 
-#define REG_NONCE_SEED_HI 0x0014u
-#define REG_NONCE_SEED_LO 0x0018u
+#define REG_SEQ_CONTROL         0x0000u
 
-#define MAX_FRAME_BYTES 4096u
+#define RING_LOG2_DEFAULT       11u
+#define RING_SLOTS_DEFAULT      (1u << RING_LOG2_DEFAULT)
+#define SLOT_STRIDE_DEFAULT     1280u
+#define AUTHENTICATED_BYTES     1240u
+#define CONTROL_PAGE_BYTES      4096u
+#define MAX_GSO_SLOTS           32u
+#define SHORT_BATCH_DELAY_NS    2000000ULL
 
 #define __ARM_NR_cacheflush 0x0f0002u
+
+typedef struct {
+    const char *dst_ip;
+    uint16_t dst_port;
+    const char *mode;
+} Options;
 
 static inline uint32_t rd32(volatile uint8_t *base, uint32_t off)
 {
@@ -77,38 +92,6 @@ static inline void wr32(volatile uint8_t *base, uint32_t off, uint32_t val)
     *(volatile uint32_t *)(base + off) = val;
 }
 
-static void dcache_invalidate(void *start, size_t len)
-{
-    syscall(__ARM_NR_cacheflush, start, (char *)start + len, 0);
-}
-
-static volatile uint8_t *map_devmem(uint32_t phys, size_t len)
-{
-    int fd = open("/dev/mem", O_RDWR | O_SYNC);
-    if (fd < 0) {
-        perror("open(/dev/mem)");
-        return MAP_FAILED;
-    }
-    off_t page = (off_t)(phys & ~0xFFFu);
-    size_t span = len + (size_t)(phys & 0xFFFu);
-    volatile uint8_t *p = (volatile uint8_t *)mmap(0, span,
-                                                  PROT_READ | PROT_WRITE,
-                                                  MAP_SHARED, fd, page);
-    close(fd);
-    if (p == MAP_FAILED) {
-        perror("mmap(/dev/mem)");
-        return MAP_FAILED;
-    }
-    return p + (phys & 0xFFFu);
-}
-
-static uint64_t monotonic_ms(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
-}
-
 static inline uint64_t monotonic_ns(void)
 {
     struct timespec ts;
@@ -116,234 +99,375 @@ static inline uint64_t monotonic_ns(void)
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-/* Phase 0 step timers (ns accumulated since last 1s print). */
-static uint64_t t_wait, t_cache, t_copy, t_send, t_ack;
-static uint64_t n_polls, n_pkts, n_batches, n_spin;
+static void dcache_invalidate(void *start, size_t len)
+{
+    /* Keep this operation: removing it caused authenticated PL data to fail. */
+    (void)syscall(__ARM_NR_cacheflush, start, (char *)start + len, 0);
+}
 
-/* Per-buffer datagram state so a whole ready set can leave in one
- * sendmmsg call: [8B nonce prefix iovec] + [ciphertext from DDR iovec]. */
-static uint8_t  g_prefix[2][8];
-static struct iovec  g_iov[2][2];
-static struct mmsghdr g_msgs[2];
+static volatile uint8_t *map_devmem(uint64_t phys, size_t len)
+{
+    int fd = open("/dev/mem", O_RDWR | O_SYNC);
+    if (fd < 0) {
+        perror("open(/dev/mem)");
+        return MAP_FAILED;
+    }
+
+    uint64_t page = phys & ~0xFFFULL;
+    size_t span = len + (size_t)(phys & 0xFFFULL);
+    void *mapped = mmap(NULL, span, PROT_READ | PROT_WRITE,
+                        MAP_SHARED, fd, (off_t)page);
+    close(fd);
+    if (mapped == MAP_FAILED) {
+        perror("mmap(/dev/mem)");
+        return MAP_FAILED;
+    }
+    return (volatile uint8_t *)mapped + (phys & 0xFFFULL);
+}
+
+static void usage(const char *prog)
+{
+    fprintf(stderr,
+            "usage: %s [dst-ip] [dst-port] [send|nosend|nocopy]\n"
+            "       %s --dst-host IP --dst-port PORT [--mode MODE]\n",
+            prog, prog);
+}
+
+static int parse_options(int argc, char **argv, Options *out)
+{
+    int positional = 0;
+    out->dst_ip = "192.168.0.37";
+    out->dst_port = 5600;
+    out->mode = "send";
+
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+            usage(argv[0]);
+            return 1;
+        }
+        if (strcmp(arg, "--dst-host") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--dst-host requires a value\n");
+                return -1;
+            }
+            out->dst_ip = argv[i];
+            continue;
+        }
+        if (strcmp(arg, "--dst-port") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--dst-port requires a value\n");
+                return -1;
+            }
+            char *end = NULL;
+            long port = strtol(argv[i], &end, 10);
+            if (*argv[i] == '\0' || *end != '\0' || port < 1 || port > 65535) {
+                fprintf(stderr, "invalid --dst-port: %s\n", argv[i]);
+                return -1;
+            }
+            out->dst_port = (uint16_t)port;
+            continue;
+        }
+        if (strcmp(arg, "--mode") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--mode requires a value\n");
+                return -1;
+            }
+            out->mode = argv[i];
+            continue;
+        }
+        if (arg[0] == '-') {
+            fprintf(stderr, "unknown option: %s\n", arg);
+            return -1;
+        }
+
+        if (positional == 0) {
+            out->dst_ip = arg;
+        } else if (positional == 1) {
+            char *end = NULL;
+            long port = strtol(arg, &end, 10);
+            if (*arg == '\0' || *end != '\0' || port < 1 || port > 65535) {
+                fprintf(stderr, "invalid destination port: %s\n", arg);
+                return -1;
+            }
+            out->dst_port = (uint16_t)port;
+        } else if (positional == 2) {
+            out->mode = arg;
+        } else {
+            fprintf(stderr, "too many positional arguments\n");
+            return -1;
+        }
+        positional++;
+    }
+
+    if (strcmp(out->mode, "send") != 0 &&
+        strcmp(out->mode, "nosend") != 0 &&
+        strcmp(out->mode, "nocopy") != 0) {
+        fprintf(stderr, "mode must be send, nosend, or nocopy\n");
+        return -1;
+    }
+    return 0;
+}
+
+static inline uint32_t ctrl_load_acquire(volatile uint32_t *word)
+{
+    uint32_t value = *word;
+    __sync_synchronize();
+    return value;
+}
+
+static inline void ctrl_store_release(volatile uint32_t *word, uint32_t value)
+{
+    __sync_synchronize();
+    *word = value;
+    __sync_synchronize();
+}
+
+static int send_gso(int sock, const void *data, size_t bytes, int do_send)
+{
+    if (!do_send)
+        return 0;
+
+    ssize_t sent = send(sock, data, bytes, 0);
+    if (sent < 0) {
+        if (errno != EINTR && errno != EAGAIN && errno != ENOBUFS)
+            perror("send(UDP GSO)");
+        return -1;
+    }
+    if ((size_t)sent != bytes) {
+        fprintf(stderr, "send(UDP GSO) short write: %zd of %zu bytes\n",
+                sent, bytes);
+        return -1;
+    }
+    return 0;
+}
 
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
-    const char *dst_ip = "192.168.0.37";
-    uint16_t dst_port = 5600;
-    if (argc > 1) dst_ip = argv[1];
-    if (argc > 2) dst_port = (uint16_t)atoi(argv[2]);
 
-    /* argv[3]: send (default) | nosend | nocopy */
-    const char *mode = (argc > 3) ? argv[3] : "send";
-    int do_send = strcmp(mode, "nosend") != 0 && strcmp(mode, "nocopy") != 0;
-    int do_copy = strcmp(mode, "nocopy") != 0;
-    if (!do_send || !do_copy)
-        printf("tx_shim: MEASURE MODE '%s' - packets are NOT sent\n", mode);
+    Options opt;
+    int parse_rc = parse_options(argc, argv, &opt);
+    if (parse_rc != 0)
+        return parse_rc > 0 ? 0 : 2;
+
+    int do_send = strcmp(opt.mode, "send") == 0;
+    int do_cache = strcmp(opt.mode, "nocopy") != 0;
+    if (!do_send || !do_cache)
+        printf("tx_shim: MEASURE MODE '%s' - network/cache operation disabled as selected\n",
+               opt.mode);
 
     volatile uint8_t *fw = map_devmem(WRITER_BASE, 0x1000);
     volatile uint8_t *seq = map_devmem(SEQ_BASE, 0x1000);
     if (fw == MAP_FAILED || seq == MAP_FAILED)
         return 1;
 
-    uint32_t b0_lo = rd32(fw, REG_BUF0_ADDR_LO);
-    uint32_t b0_hi = rd32(fw, REG_BUF0_ADDR_HI);
-    uint32_t b1_lo = rd32(fw, REG_BUF1_ADDR_LO);
-    uint32_t b1_hi = rd32(fw, REG_BUF1_ADDR_HI);
-    uint64_t phys0 = ((uint64_t)b0_hi << 32) | b0_lo;
-    uint64_t phys1 = ((uint64_t)b1_hi << 32) | b1_lo;
-    printf("tx_shim: buf0 @ 0x%" PRIX64 "  buf1 @ 0x%" PRIX64 "\n", phys0, phys1);
+    uint64_t ring_base = ((uint64_t)rd32(fw, REG_RING_BASE_HI) << 32) |
+                         rd32(fw, REG_RING_BASE_LO);
+    uint64_t ctrl_base = ((uint64_t)rd32(fw, REG_CTRL_BASE_HI) << 32) |
+                         rd32(fw, REG_CTRL_BASE_LO);
+    uint32_t ring_log2 = rd32(fw, REG_RING_LOG2);
+    uint32_t slot_stride = rd32(fw, REG_SLOT_STRIDE);
+    uint32_t ring_slots = (ring_log2 < 31) ? (1u << ring_log2) : 0;
 
-    volatile uint8_t *buf[2];
-    buf[0] = map_devmem((uint32_t)phys0, MAX_FRAME_BYTES);
-    buf[1] = map_devmem((uint32_t)phys1, MAX_FRAME_BYTES);
-    if (buf[0] == MAP_FAILED || buf[1] == MAP_FAILED)
-        return 1;
-
-    uint64_t nonce_seed =
-        ((uint64_t)rd32(seq, REG_NONCE_SEED_HI) << 32) |
-        (uint64_t)rd32(seq, REG_NONCE_SEED_LO);
-    printf("tx_shim: nonce seed = %" PRIu64 "\n", nonce_seed);
-
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        return 1;
-    }
-    int sndbuf = 4 * 1024 * 1024;
-    setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
-
-    struct sockaddr_in dst;
-    memset(&dst, 0, sizeof(dst));
-    dst.sin_family = AF_INET;
-    dst.sin_port = htons(dst_port);
-    if (inet_pton(AF_INET, dst_ip, &dst.sin_addr) != 1) {
-        fprintf(stderr, "bad dst ip %s\n", dst_ip);
+    if (ring_log2 != RING_LOG2_DEFAULT || ring_slots != RING_SLOTS_DEFAULT ||
+        slot_stride != SLOT_STRIDE_DEFAULT || ring_base == 0 || ctrl_base == 0) {
+        fprintf(stderr,
+                "tx_shim: invalid ring config base=0x%" PRIX64
+                " ctrl=0x%" PRIX64 " log2=%u stride=%u\n",
+                ring_base, ctrl_base, ring_log2, slot_stride);
         return 1;
     }
 
-    /* Connected socket: one-time binding; sendmsg() then skips the
-     * per-call sockaddr copy that sendto() repeats every datagram. */
-    if (connect(sock, (const struct sockaddr *)&dst, sizeof(dst)) < 0) {
-        perror("connect");
+    size_t ring_bytes = (size_t)ring_slots * (size_t)slot_stride;
+    if ((ring_base & 127ULL) != 0 || (ctrl_base & 0xFFFULL) != 0 ||
+        (ctrl_base >= ring_base && ctrl_base < ring_base + ring_bytes)) {
+        fprintf(stderr,
+                "tx_shim: unsafe ring geometry: ring alignment=%" PRIu64
+                " ctrl alignment=%" PRIu64 " overlap=%d\n",
+                ring_base & 127ULL, ctrl_base & 0xFFFULL,
+                ctrl_base >= ring_base && ctrl_base < ring_base + ring_bytes);
         return 1;
     }
 
-    printf("tx_shim: sending to %s:%u (1:1 daemon loop)\n", dst_ip, dst_port);
-    fflush(stdout);
+    volatile uint8_t *ring = map_devmem(ring_base, ring_bytes);
+    volatile uint8_t *ctrl_map = map_devmem(ctrl_base, CONTROL_PAGE_BYTES);
+    if (ring == MAP_FAILED || ctrl_map == MAP_FAILED)
+        return 1;
+    volatile uint32_t *ctrl = (volatile uint32_t *)ctrl_map;
+    uint32_t ring_mask = ring_slots - 1u;
 
-    /* Enable the sequencer. The configure-only daemon left it disabled so
-     * the nonce counter could not run ahead of the writer while nobody was
-     * draining. The FSM processes the pending key load first, then the
-     * session path - safe to enable here, right before the drain loop. */
-    printf("tx_shim: enabling sequencer\n");
-    fflush(stdout);
-    wr32(seq, 0x00u, 1u);
+    uint32_t consume = ctrl_load_acquire(&ctrl[1]) & ring_mask;
+    uint32_t produce = ctrl_load_acquire(&ctrl[0]) & ring_mask;
+    uint32_t writer_status = rd32(fw, REG_WRITER_STATUS);
+    printf("tx_shim: ring @ 0x%" PRIX64 " (%u slots x %u = %zu bytes)\n",
+           ring_base, ring_slots, slot_stride, ring_bytes);
+    printf("tx_shim: ctrl @ 0x%" PRIX64 " produce=%u consume=%u status=0x%08X\n",
+           ctrl_base, produce, consume, writer_status);
+    printf("tx_shim: authenticated body=%u bytes, transport slot=%u bytes\n",
+           AUTHENTICATED_BYTES, slot_stride);
 
-    /* Dedicated-core spin: the board has two A9s; the daemon idles on CPU0,
-     * the shim owns CPU1. No migration, no timer jitter. */
+    int sock = -1;
+    if (do_send) {
+        sock = socket(AF_INET, SOCK_DGRAM, 0);
+        if (sock < 0) {
+            perror("socket");
+            return 1;
+        }
+        int sndbuf = 4 * 1024 * 1024;
+        if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+            perror("setsockopt(SO_SNDBUF)");
+
+        int segment_size = (int)slot_stride;
+        if (setsockopt(sock, IPPROTO_UDP, UDP_SEGMENT,
+                       &segment_size, sizeof(segment_size)) < 0) {
+            perror("setsockopt(UDP_SEGMENT=1280)");
+            close(sock);
+            return 1;
+        }
+
+        struct sockaddr_in dst;
+        memset(&dst, 0, sizeof(dst));
+        dst.sin_family = AF_INET;
+        dst.sin_port = htons(opt.dst_port);
+        if (inet_pton(AF_INET, opt.dst_ip, &dst.sin_addr) != 1) {
+            fprintf(stderr, "bad destination IP: %s\n", opt.dst_ip);
+            close(sock);
+            return 1;
+        }
+        if (connect(sock, (const struct sockaddr *)&dst, sizeof(dst)) < 0) {
+            perror("connect");
+            close(sock);
+            return 1;
+        }
+        printf("tx_shim: UDP GSO segment=%u batch<=%u destination=%s:%u\n",
+               slot_stride, MAX_GSO_SLOTS, opt.dst_ip, opt.dst_port);
+    }
+
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(1, &cpuset);
     if (sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
-        perror("sched_setaffinity (continuing)");
-    setpriority(PRIO_PROCESS, 0, -20);
+        perror("sched_setaffinity CPU1 (continuing)");
+    if (setpriority(PRIO_PROCESS, 0, -20) != 0)
+        perror("setpriority -20 (continuing)");
 
-    /* (datagram assembled in-place via iovecs; no staging buffer) */
-    uint64_t frames = 0, bytes = 0;
-    uint64_t debug_prefixes = 0;
+    /* The configure-only daemon leaves the sequencer disabled until this point. */
+    wr32(seq, REG_SEQ_CONTROL, 1u);
+    printf("tx_shim: sequencer enabled; draining ring\n");
+
+    uint64_t stat_start = monotonic_ns();
+    uint64_t stat_pkts = 0;
+    uint64_t stat_batches = 0;
+    uint64_t stat_syscalls = 0;
+    uint64_t stat_short_batches = 0;
+    uint64_t stat_slot_bytes = 0;
+    uint64_t stat_cache_ns = 0;
+    uint64_t stat_spins = 0;
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
-    uint64_t started = monotonic_ms(), last_print = started;
-
-    int nready;
-    int rdy_idx[2];
-    uint32_t rdy_bytes[2];
+    uint64_t partial_since = 0;
 
     for (;;) {
-        uint64_t t0 = monotonic_ns();
-        uint32_t mask = rd32(fw, REG_READY_MASK) & 0x3u;
-        uint64_t t1 = monotonic_ns();
-        t_wait += t1 - t0;
-        n_polls++;
-        if (mask == 0) {
-            /* Busy spin. The old usleep(10) hid ~25us per packet: the
-             * writer refills a freed buffer in ~5us, so sleeping for 10us
-             * per poll (8.5 polls/pkt) put dead time between producer and
-             * consumer. The shim owns its core, spinning is free. */
-            n_spin++;
+        produce = ctrl_load_acquire(&ctrl[0]) & ring_mask;
+        uint32_t available = (produce - consume) & ring_mask;
+        if (available == 0) {
+            stat_spins++;
             continue;
         }
 
-        /* ---- collect every ready buffer, cache-invalidate, build msgs ---- */
-        nready = 0;
-        for (int idx = 0; idx < 2; idx++) {
-            if (!(mask & (1u << idx)))
+        uint64_t now = monotonic_ns();
+        if (available < MAX_GSO_SLOTS) {
+            if (partial_since == 0)
+                partial_since = now;
+            if (now - partial_since < SHORT_BATCH_DELAY_NS)
                 continue;
-
-            uint32_t frame_id = rd32(fw, idx == 0 ? REG_FRAME_ID_BUF0
-                                                  : REG_FRAME_ID_BUF1);
-            uint32_t nbytes = rd32(fw, idx == 0 ? REG_VALID_BYTES_BUF0
-                                                : REG_VALID_BYTES_BUF1);
-            uint64_t nonce_pkt = nonce_seed + (uint64_t)frame_id;
-
-            if (debug_prefixes < 12) {
-                printf("tx_shim: buf%d frame_id=%" PRIu32
-                       " nonce=%" PRIu64 " bytes=%" PRIu32 "\n",
-                       idx, frame_id, nonce_pkt, nbytes);
-                debug_prefixes++;
-            }
-
-            if (nbytes == 0) {
-                wr32(fw, REG_CONSUMED_MASK, 1u << idx);
-                continue;
-            }
-            if (nbytes > MAX_FRAME_BYTES)
-                nbytes = MAX_FRAME_BYTES;
-
-            // The PL writes these buffers through the HP port. Invalidate
-            // the ARM cache before reading the buffer; without this, the
-            // shim can send stale data and every GCM tag check fails.
-            uint64_t c0 = monotonic_ns();
-            if (do_copy)
-                dcache_invalidate((void *)buf[idx], nbytes);
-            uint64_t c1 = monotonic_ns();
-            t_cache += c1 - c0;
-
-            uint8_t *pfx = g_prefix[idx];
-            for (int b = 0; b < 8; b++)
-                pfx[b] = (uint8_t)(nonce_pkt >> (56 - 8 * b));
-            g_iov[idx][0].iov_base = pfx;
-            g_iov[idx][0].iov_len  = 8;
-            g_iov[idx][1].iov_base = (void *)buf[idx];
-            g_iov[idx][1].iov_len  = nbytes;
-            memset(&g_msgs[idx].msg_hdr, 0, sizeof(struct msghdr));
-            g_msgs[idx].msg_hdr.msg_iov    = g_iov[idx];
-            g_msgs[idx].msg_hdr.msg_iovlen = 2;
-            g_msgs[idx].msg_len = 0;
-
-            rdy_idx[nready]   = idx;
-            rdy_bytes[nready] = nbytes;
-            nready++;
-        }
-        uint64_t c2 = monotonic_ns();
-        t_copy += c2 - t1;
-
-        /* ---- one syscall for the whole ready set ---- */
-        int sent_pkts = 0;
-        if (nready > 0) {
-            uint64_t s0 = monotonic_ns();
-            if (do_send)
-                sent_pkts = sendmmsg(sock, g_msgs, (unsigned int)nready, 0);
-            else
-                sent_pkts = nready;
-            uint64_t s1 = monotonic_ns();
-            t_send += s1 - s0;
-            n_batches++;
-            if (sent_pkts < 0 && do_send) {
-                /* ECONNREFUSED fires when the PC has no listener and its
-                 * ICMP port-unreachable arrives; NEVER exit - keep
-                 * draining so the pipeline stays 1:1. */
-                perror("sendmmsg");
-                sent_pkts = 0;
-            }
-
-            /* ---- ack every drained buffer ---- */
-            uint64_t a0 = monotonic_ns();
-            int acked = 0;
-            for (int i = 0; i < nready; i++) {
-                int idx = rdy_idx[i];
-                wr32(fw, REG_IRQ_STATUS, 1u);           /* clear_irq (RW1C) */
-                wr32(fw, REG_CONSUMED_MASK, 1u << idx); /* mark consumed   */
-                frames++;
-                bytes += (uint64_t)(8 + rdy_bytes[i]);
-                acked++;
-            }
-            t_ack += monotonic_ns() - a0;
-            n_pkts += acked;
+        } else {
+            partial_since = 0;
         }
 
-        uint64_t now = monotonic_ms();
-        if (now - last_print >= 1000ULL) {
+        uint32_t batch = available > MAX_GSO_SLOTS ? MAX_GSO_SLOTS : available;
+        uint32_t batch_start = consume;
+        uint32_t first = ring_slots - batch_start;
+        if (first > batch)
+            first = batch;
+        uint32_t second = batch - first;
+        uint32_t parts[2] = {first, second};
+        uint32_t sent_slots = 0;
+        int failed = 0;
+
+        for (unsigned part = 0; part < 2 && parts[part] != 0; part++) {
+            uint32_t part_slots = parts[part];
+            /* Use the original batch start plus the amount already sent.
+             * Do not add sent_slots to the already-advanced consume index:
+             * that skips the second half of a ring-wrap batch. */
+            uint32_t part_index = (batch_start + sent_slots) & ring_mask;
+            volatile uint8_t *slot_ptr = ring +
+                ((size_t)part_index * slot_stride);
+            size_t part_bytes = (size_t)part_slots * slot_stride;
+
+            if (do_cache) {
+                uint64_t c0 = monotonic_ns();
+                dcache_invalidate((void *)slot_ptr, part_bytes);
+                stat_cache_ns += monotonic_ns() - c0;
+            }
+
+            stat_syscalls += do_send ? 1u : 0u;
+            if (send_gso(sock, (const void *)slot_ptr, part_bytes, do_send) != 0) {
+                failed = 1;
+                break;
+            }
+
+            sent_slots += part_slots;
+            consume = (batch_start + sent_slots) & ring_mask;
+            ctrl_store_release(&ctrl[1], consume);
+            stat_pkts += part_slots;
+            stat_slot_bytes += (uint64_t)part_slots * slot_stride;
+        }
+
+        if (sent_slots == 0)
+            continue;
+
+        stat_batches++;
+        if (!failed && sent_slots < MAX_GSO_SLOTS)
+            stat_short_batches++;
+        if (failed) {
+            /* A successful first half of a wrap is already published. The
+             * next iteration retries only the unsent slots. */
+            partial_since = 0;
+            continue;
+        }
+        partial_since = 0;
+
+        now = monotonic_ns();
+        if (now - stat_start >= 1000000000ULL) {
             uint32_t drops_now = rd32(fw, REG_DROP_COUNT);
-            printf("tx_shim: frames=%" PRIu64 " bytes=%" PRIu64
-                   " drops_delta=%u\n",
-                   frames, bytes, drops_now - drops_last);
-            printf("tx_shim: t[pkt] wait=%.1fus cache=%.1fus copy=%.1fus "
-                   "send=%.1fus ack=%.1fus polls/pkt=%.1f batch=%.2f spin%%=%.0f\n",
-                   n_pkts ? (double)t_wait / n_pkts / 1000.0 : 0.0,
-                   n_pkts ? (double)t_cache / n_pkts / 1000.0 : 0.0,
-                   n_pkts ? (double)t_copy  / n_pkts / 1000.0 : 0.0,
-                   n_pkts ? (double)t_send  / n_pkts / 1000.0 : 0.0,
-                   n_pkts ? (double)t_ack   / n_pkts / 1000.0 : 0.0,
-                   n_pkts ? (double)n_polls / (double)n_pkts : 0.0,
-                   n_batches ? (double)n_pkts / (double)n_batches : 0.0,
-                   (n_polls + n_spin) ? 100.0 * (double)n_spin / (double)(n_polls + n_spin) : 0.0);
-            t_wait = t_cache = t_copy = t_send = t_ack = 0;
-            n_polls = n_pkts = n_batches = n_spin = 0;
+            uint32_t complete_now = rd32(fw, REG_COMPLETE_COUNT_LO);
+            double seconds = (double)(now - stat_start) / 1e9;
+            double pkts_s = (double)stat_pkts / seconds;
+            double batches_s = (double)stat_batches / seconds;
+            double syscalls_s = (double)stat_syscalls / seconds;
+            double cache_us = (double)stat_cache_ns / 1000.0;
+            printf("tx_shim: pkts/s=%.1f batches/s=%.1f syscalls/s=%.1f "
+                   "cache-invalidate-us=%.1f slot-bytes/s=%.0f "
+                   "drops=%u drops_delta=%u short-batches=%" PRIu64
+                   " produce=%u consume=%u complete=%u spins=%" PRIu64 "\n",
+                   pkts_s, batches_s, syscalls_s, cache_us,
+                   (double)stat_slot_bytes / seconds,
+                   drops_now, drops_now - drops_last, stat_short_batches,
+                   produce, consume, complete_now, stat_spins);
+            stat_start = now;
+            stat_pkts = 0;
+            stat_batches = 0;
+            stat_syscalls = 0;
+            stat_short_batches = 0;
+            stat_slot_bytes = 0;
+            stat_cache_ns = 0;
+            stat_spins = 0;
             drops_last = drops_now;
-            last_print = now;
         }
     }
 
+    if (sock >= 0)
+        close(sock);
     return 0;
 }

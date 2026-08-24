@@ -1,8 +1,7 @@
 """HDMI AES TX daemon.
 
-Loads the PYNQ overlay, configures the AES session sequencer and the PingPong
-DDR writer, then continuously drains encrypted packets from DDR and fires them
-as UDP datagrams over Ethernet.
+Loads the PYNQ overlay, configures the AES session sequencer and the B.2 DDR
+packet ring, then holds the overlay and buffers for the B.3 C GSO sender."
 
 Usage:
   python tx_daemon.py \\
@@ -12,52 +11,52 @@ Usage:
 
 The daemon:
   1. Loads the bitstream and programs the sequencer (key / session / nonce).
-  2. Allocates two contiguous DDR buffers via pynq.allocate, programs their
-     physical addresses into frame_writer_0.
-  3. Enables stream-source mode so the DDR writer consumes AES ciphertext.
-  4. Loops polling READY_MASK; when a buffer is ready it copies bytes out,
-     splits them into MTU-sized UDP datagrams and sends, then marks consumed.
+  2. Allocates one contiguous 2048-slot ring and one separate 4 KiB control
+     page via pynq.allocate, then programs both physical addresses into the
+     B.2 DDRRingWriter.
+  3. Enables stream-source mode. The B.2 writer publishes complete 1280-byte
+     slots; the B.3 tx_shim drains them with UDP GSO.
+  4. In configure-only mode, holds the overlay and allocations open until
+     tx_shim exits or the daemon receives Ctrl-C.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
-import socket
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# PingPong / frame_writer_0 register offsets
+# DDRRingWriter / frame_writer_0 register offsets
 # ---------------------------------------------------------------------------
 REG_VERSION           = 0x0000
-REG_CONTROL           = 0x0004   # [0] enable  [1] soft_reset_pulse
-REG_STATUS            = 0x0008   # [0] running  [1] fault
-REG_FRAME_BYTES_CFG   = 0x0010
-REG_WRITE_INDEX       = 0x0014
-REG_READY_MASK        = 0x0018   # [1:0] buffer readiness flags
-REG_CONSUMED_MASK     = 0x001C   # RW1C – write 1 to mark buffer consumed
-REG_FRAME_ID_BUF0     = 0x0020
-REG_FRAME_ID_BUF1     = 0x0024
-REG_VALID_BYTES_BUF0  = 0x0028
-REG_VALID_BYTES_BUF1  = 0x002C
-REG_DROP_COUNT        = 0x0030
-REG_IRQ_ENABLE        = 0x0034   # [0] enable IRQ output
-REG_IRQ_STATUS        = 0x0038   # RW1C – write 1 to clear
-REG_WRITER_ENABLE     = 0x0040   # [0] enable deterministic writer path
-REG_BUF0_ADDR_LO      = 0x0044
-REG_BUF0_ADDR_HI      = 0x0048
-REG_BUF1_ADDR_LO      = 0x004C
-REG_BUF1_ADDR_HI      = 0x0050
-REG_WRITER_STATUS     = 0x0054   # [0] busy  [1] fault  [2] writer_enable
-REG_WRITER_ERROR_COUNT= 0x0058
-REG_WRITER_CMD        = 0x005C   # RW1C [0] clear_fault [1] clear_error_count
-REG_WRITER_SRC_SEL    = 0x0060   # [0] 0=deterministic pattern  1=AXI-Stream
+REG_CONTROL           = 0x0004   # [0] enable
+REG_STATUS            = 0x0008   # [0] enabled [1] fault
+REG_RING_BASE_LO      = 0x000C
+REG_RING_BASE_HI      = 0x0010
+REG_CTRL_BASE_LO      = 0x0014
+REG_CTRL_BASE_HI      = 0x0018
+REG_RING_LOG2         = 0x001C
+REG_SLOT_STRIDE       = 0x0020
+REG_PRODUCE_IDX       = 0x0024
+REG_CONSUME_SHADOW    = 0x0028
+REG_DROP_COUNT        = 0x002C
+REG_COMPLETE_COUNT_LO = 0x0030
+REG_COMPLETE_COUNT_HI = 0x0034
+REG_FAULT_CODE        = 0x003C
+REG_WRITER_STATUS     = 0x0008
 
 # AXI AES-GCM stream register map (subset)
 AES_REG_STATUS        = 0x0004
+
+RING_LOG2 = 11
+RING_SLOTS = 1 << RING_LOG2
+SLOT_STRIDE = 1280
+RING_BYTES = RING_SLOTS * SLOT_STRIDE
+CONTROL_PAGE_BYTES = 4096
 
 # AXI GPIO register map (xilinx.com:ip:axi_gpio:2.0)
 GPIO_DATA     = 0x00  # channel 1 data (used for hdmi_in_hpd)
@@ -95,8 +94,8 @@ def _load_pynq() -> Any:
     return pynq_mod
 
 
-class PingPongCtrl:
-    """Thin register-level driver for frame_writer_0 (AXI_PingPong_Ctrl)."""
+class DdrRingWriter:
+    """Register-level driver for frame_writer_0 (B.2 DDRRingWriter)."""
 
     def __init__(self, mmio: Any) -> None:
         self._m = mmio
@@ -108,42 +107,31 @@ class PingPongCtrl:
         return int(self._m.read(off)) & 0xFFFF_FFFF
 
     def soft_reset(self) -> None:
-        self.wr(REG_CONTROL, 0x2)  # soft_reset_pulse
+        self.wr(REG_CONTROL, 0)
         time.sleep(0.001)
 
-    def configure_buffers(self, phys0: int, phys1: int) -> None:
-        self.wr(REG_BUF0_ADDR_LO,  phys0 & 0xFFFF_FFFF)
-        self.wr(REG_BUF0_ADDR_HI, (phys0 >> 32) & 0xFFFF_FFFF)
-        self.wr(REG_BUF1_ADDR_LO,  phys1 & 0xFFFF_FFFF)
-        self.wr(REG_BUF1_ADDR_HI, (phys1 >> 32) & 0xFFFF_FFFF)
+    def configure_ring(self, ring_phys: int, ctrl_phys: int) -> None:
+        self.wr(REG_RING_BASE_LO, ring_phys & 0xFFFF_FFFF)
+        self.wr(REG_RING_BASE_HI, (ring_phys >> 32) & 0xFFFF_FFFF)
+        self.wr(REG_CTRL_BASE_LO, ctrl_phys & 0xFFFF_FFFF)
+        self.wr(REG_CTRL_BASE_HI, (ctrl_phys >> 32) & 0xFFFF_FFFF)
 
-    def enable_stream_writer(self, frame_bytes: int) -> None:
-        self.wr(REG_FRAME_BYTES_CFG, frame_bytes)
-        self.wr(REG_WRITER_SRC_SEL, 0x1)   # AXI-Stream source
-        self.wr(REG_WRITER_ENABLE,  0x1)
-        self.wr(REG_IRQ_ENABLE,     0x1)
-        self.wr(REG_CONTROL,        0x1)   # enable
+    def enable_stream_writer(self) -> None:
+        self.wr(REG_CONTROL, 0x1)
 
-    def ready_mask(self) -> int:
-        return self.rd(REG_READY_MASK) & 0x3
-
-    def valid_bytes(self, buf_idx: int) -> int:
-        off = REG_VALID_BYTES_BUF0 if buf_idx == 0 else REG_VALID_BYTES_BUF1
-        return self.rd(off)
-
-    def frame_id(self, buf_idx: int) -> int:
-        off = REG_FRAME_ID_BUF0 if buf_idx == 0 else REG_FRAME_ID_BUF1
-        return self.rd(off)
-
-    def clear_irq(self) -> None:
-        self.wr(REG_IRQ_STATUS, 0x1)
-
-    def mark_consumed(self, buf_idx: int) -> None:
-        self.wr(REG_CONSUMED_MASK, 1 << buf_idx)
+    def ring_config(self) -> dict:
+        ring = self.rd(REG_RING_BASE_LO) | (self.rd(REG_RING_BASE_HI) << 32)
+        ctrl = self.rd(REG_CTRL_BASE_LO) | (self.rd(REG_CTRL_BASE_HI) << 32)
+        return {
+            "ring_base": ring,
+            "ctrl_base": ctrl,
+            "ring_log2": self.rd(REG_RING_LOG2),
+            "slot_stride": self.rd(REG_SLOT_STRIDE),
+        }
 
     def writer_status(self) -> dict:
-        ws = self.rd(REG_WRITER_STATUS)
-        return {"busy": ws & 0x1, "fault": (ws >> 1) & 0x1, "enabled": (ws >> 2) & 0x1}
+        ws = self.rd(REG_STATUS)
+        return {"enabled": ws & 0x1, "fault": (ws >> 1) & 0x1}
 
 
 class HdmiFrontEndGpio:
@@ -193,18 +181,6 @@ class AesCoreStatus:
         }
 
 
-def send_packet_udp(sock: socket.socket, dst: tuple, data: memoryview) -> int:
-    """Send one already-complete OSV protocol packet (header+ciphertext+tag) as-is.
-
-    The PL packetizer + AES core already build a full OS-VideoSDR datagram in
-    DDR (40-byte header, ciphertext, 16-byte tag). No extra framing is needed;
-    do not re-fragment it, main_rx.py expects the raw datagram on the wire.
-    """
-    payload = bytes(data)
-    sock.sendto(payload, dst)
-    return len(payload)
-
-
 def run(args: argparse.Namespace) -> None:
     pynq = _load_pynq()
     Overlay = pynq.Overlay
@@ -213,6 +189,10 @@ def run(args: argparse.Namespace) -> None:
     bit_path = Path(args.bitstream).expanduser().resolve()
     if not bit_path.exists():
         raise FileNotFoundError(f"Bitstream not found: {bit_path}")
+    if not args.configure_only:
+        raise ValueError(
+            "B.3 requires --configure-only; tx_shim is the only active UDP sender"
+        )
 
     print(f"[tx_daemon] Loading overlay: {bit_path}")
     overlay = Overlay(str(bit_path))
@@ -283,13 +263,13 @@ def run(args: argparse.Namespace) -> None:
         f"key_dirty={seq_status['key_dirty']} nonce={seq_status['nonce_counter']}"
     )
 
-    # --- Set up PingPong DDR writer ---
+    # --- Set up the B.2 DDR packet ring writer ---
     if "frame_writer_0" not in overlay.ip_dict:
         raise KeyError(f"frame_writer_0 not in overlay. Available: {list(overlay.ip_dict)}")
 
     fw_info = overlay.ip_dict["frame_writer_0"]
     import numpy as np  # noqa: PLC0415
-    fw = PingPongCtrl(pynq.MMIO(fw_info["phys_addr"], fw_info["addr_range"]))
+    fw = DdrRingWriter(pynq.MMIO(fw_info["phys_addr"], fw_info["addr_range"]))
     fw.soft_reset()
 
     hdmi_gpio = None
@@ -317,155 +297,54 @@ def run(args: argparse.Namespace) -> None:
     else:
         print("[tx_daemon] WARNING: aes_gcm_0 missing; cannot read AES status.")
 
-    # Each PL packet written to DDR is now the COMPLETE OSV datagram body:
-    # 40-byte header + payload_bytes ciphertext + 16-byte GCM tag. The AES core
-    # appends the tag to its ciphertext stream as a final full beat (TKEEP is
-    # always 0xFFFF), so total = header + payload + tag = 1232 bytes for the
-    # default 1176-byte payload = 77 full 16-byte beats. The writer completes
-    # a buffer exactly when the tag beat arrives - no polling, no races.
-    buf_bytes = args.payload_bytes + 40 + 16
-    buf0 = allocate(shape=(buf_bytes,), dtype=np.uint8)
-    buf1 = allocate(shape=(buf_bytes,), dtype=np.uint8)
-    phys0 = buf0.physical_address
-    phys1 = buf1.physical_address
-    print(f"[tx_daemon] DDR buf0 @ 0x{phys0:08X}  buf1 @ 0x{phys1:08X}  ({buf_bytes} bytes each)")
+    # B.2 writes one 1240-byte authenticated body plus 40 zero transport
+    # bytes into each 1280-byte slot. Allocate the ring and its control page
+    # separately so the PS can map the control words independently.
+    ring_buf = allocate(shape=(RING_BYTES,), dtype=np.uint8)
+    ctrl_buf = allocate(shape=(CONTROL_PAGE_BYTES,), dtype=np.uint8)
+    ring_phys = int(ring_buf.physical_address)
+    ctrl_phys = int(ctrl_buf.physical_address)
+    if ring_phys & 0x7F:
+        raise RuntimeError(f"B.2 ring allocation is not 128-byte aligned: 0x{ring_phys:X}")
+    if ctrl_phys & 0xFFF:
+        raise RuntimeError(f"B.2 control allocation is not page aligned: 0x{ctrl_phys:X}")
+    if ((ring_phys <= ctrl_phys < ring_phys + RING_BYTES) or
+            (ctrl_phys <= ring_phys < ctrl_phys + CONTROL_PAGE_BYTES)):
+        raise RuntimeError("B.2 control page overlaps the ring allocation")
+    ctrl_buf[:] = 0
+    if hasattr(ctrl_buf, "flush"):
+        ctrl_buf.flush()
+    print(f"[tx_daemon] DDR ring @ 0x{ring_phys:08X} ({RING_SLOTS} x {SLOT_STRIDE} = {RING_BYTES} bytes)")
+    print(f"[tx_daemon] DDR ctrl @ 0x{ctrl_phys:08X} ({CONTROL_PAGE_BYTES} bytes)")
 
-    fw.configure_buffers(phys0, phys1)
-    fw.enable_stream_writer(buf_bytes)
-    print(f"[tx_daemon] PingPong writer enabled. Writer status: {fw.writer_status()}")
-
-    # --- UDP socket ---
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)
-    dst = (args.dst_host, args.dst_port)
-    print(f"[tx_daemon] Sending UDP to {dst[0]}:{dst[1]}")
-    print("[tx_daemon] Running. Ctrl-C to stop.")
+    fw.configure_ring(ring_phys, ctrl_phys)
+    ring_cfg = fw.ring_config()
+    if ring_cfg != {
+        "ring_base": ring_phys,
+        "ctrl_base": ctrl_phys,
+        "ring_log2": RING_LOG2,
+        "slot_stride": SLOT_STRIDE,
+    }:
+        raise RuntimeError(f"B.2 ring register readback mismatch: {ring_cfg}")
+    fw.enable_stream_writer()
+    print(f"[tx_daemon] DDR ring writer enabled. Config={ring_cfg} status={fw.writer_status()}")
 
     if args.configure_only:
-        # Hold the overlay + buffers open so an external sender (tx_shim.c)
-        # can read the writer registers via /dev/mem and drain the buffers.
+        # Hold the overlay and allocations open so tx_shim can map and drain
+        # the ring through the writer's physical-address registers.
         print(
-            f"[tx_daemon] configure-only mode: buffers held, no Python send loop. "
-            f"buf0=0x{phys0:08X} buf1=0x{phys1:08X} (sequencer DISABLED; tx_shim enables it)",
+            "[tx_daemon] configure-only mode: ring held, no Python send loop; "
+            "sequencer DISABLED until tx_shim enables it",
             flush=True,
         )
-        while True:
-            time.sleep(3600)
+        try:
+            while True:
+                time.sleep(3600)
+        finally:
+            fw.wr(REG_CONTROL, 0)
+            ring_buf.freebuffer()
+            ctrl_buf.freebuffer()
 
-    frames_sent = 0
-    bytes_sent = 0
-    drops_last = 0
-    idle_since = time.monotonic()
-    last_status = time.monotonic()
-    try:
-        while True:
-            mask = fw.ready_mask()
-            if mask == 0:
-                now = time.monotonic()
-                if args.status_interval > 0 and (now - last_status) >= args.status_interval:
-                    ws = fw.writer_status()
-                    drops_now = fw.rd(REG_DROP_COUNT)
-                    lock_str = "n/a"
-                    if hdmi_gpio is not None:
-                        lock_str = str(hdmi_gpio.pixel_lock())
-                    aes_str = "n/a"
-                    if aes_dbg is not None:
-                        aes_s = aes_dbg.decode()
-                        aes_str = (
-                            f"raw=0x{aes_s['raw']:08X},k=0x{aes_s['keys_ready']:X},"
-                            f"sess={aes_s['session_ready']},pt={aes_s['pt_ready']},"
-                            f"strm={aes_s['stream_mode']},h={aes_s['h_valid']}"
-                        )
-                    seq_s = seq.read_status()
-                    seq_str = (
-                        f"raw=0x{seq_s['status_raw']:08X},busy={seq_s['seq_busy']},"
-                        f"kdirty={seq_s['key_dirty']},nonce={seq_s['nonce_counter']},"
-                        f"aes_raw=0x{seq_s['aes_status_raw']:08X},"
-                        f"kready=0x{seq_s['aes_keys_ready']:X},sess={seq_s['aes_session_ready']},"
-                        f"pt={seq_s['aes_pt_ready']},busy={seq_s['aes_busy']},"
-                        f"h={seq_s['aes_h_valid']},strm={seq_s['aes_stream_mode']}"
-                    )
-                    vid = seq.read_video_counters()
-                    print(
-                        "[tx_daemon] idle "
-                        f"pixel_lock={lock_str} "
-                        f"seq={seq_str} "
-                        f"aes={aes_str} "
-                        f"beats={vid['video_beat_count']} sof={vid['video_frame_count']} prefifo={vid['prefifo_beats']} "
-                        f"ready_mask=0 writer_busy={ws['busy']} writer_fault={ws['fault']} "
-                        f"drops={drops_now}"
-                    )
-                    last_status = now
-
-                if args.idle_exit_s > 0 and (now - idle_since) >= args.idle_exit_s:
-                    print(
-                        "[tx_daemon] idle timeout reached "
-                        f"({args.idle_exit_s:.1f}s) with no ready buffers; exiting."
-                    )
-                    break
-
-                time.sleep(0.001)
-                continue
-
-            idle_since = time.monotonic()
-
-            # The PL encrypts header+payload together (AAD=0), so the wire
-            # format is: 8-byte cleartext nonce prefix + ciphertext(header+
-            # payload) + 16-byte tag. The packetizer's pacer makes the
-            # sequencer's nonce deterministic per buffered packet:
-            #   both buffers ready: buf0 = nonce-2, buf1 = nonce-1
-            #   one buffer ready:   that buffer = nonce-1
-            nonce_now = seq.nonce_counter()
-            both_ready = (mask & 0x3) == 0x3
-
-            for buf_idx in range(2):
-                if not (mask & (1 << buf_idx)):
-                    continue
-
-                if buf_idx == 0 and both_ready:
-                    nonce_pkt = nonce_now - 2
-                else:
-                    nonce_pkt = nonce_now - 1
-                prefix = nonce_pkt.to_bytes(8, "big")
-
-                nbytes = fw.valid_bytes(buf_idx)
-                if nbytes == 0:
-                    fw.mark_consumed(buf_idx)
-                    continue
-
-                # Invalidate cache for this buffer before reading
-                buf = buf0 if buf_idx == 0 else buf1
-                buf.invalidate()
-
-                # Datagram = nonce prefix + complete encrypted packet from DDR
-                # (ciphertext of header+payload, then tag).
-                sent = send_packet_udp(sock, dst, prefix + bytes(memoryview(buf)[:nbytes]))
-                fw.clear_irq()
-                fw.mark_consumed(buf_idx)
-
-                frames_sent += 1
-                bytes_sent += sent
-                last_status = time.monotonic()
-
-            # Periodic status every 100 frames
-            if frames_sent > 0 and frames_sent % 100 == 0:
-                drops_now = fw.rd(REG_DROP_COUNT)
-                dropped = drops_now - drops_last
-                drops_last = drops_now
-                gh = seq.read_ghash().hex()
-                tg = seq.read_tag().hex()
-                print(
-                    f"[tx_daemon] frames={frames_sent}  bytes={bytes_sent}"
-                    f"  drops_delta={dropped} ghash={gh} tag={tg}"
-                )
-
-    except KeyboardInterrupt:
-        print(f"\n[tx_daemon] Stopped. frames={frames_sent}  bytes={bytes_sent}")
-    finally:
-        fw.wr(REG_CONTROL, 0)  # disable writer
-        buf0.freebuffer()
-        buf1.freebuffer()
-        sock.close()
 
 
 def _parse_args() -> argparse.Namespace:

@@ -18,6 +18,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+AUTHENTICATED_BODY_BYTES = 1240
+TRANSPORT_SLOT_BYTES = 1280
 BOARD = "xilinx@192.168.0.123"
 FREQS = [50, 75, 100]
 MINUTES_PER_FREQ = 25.0
@@ -110,8 +112,13 @@ def monitor_leg(minutes, label, H):
             d, _ = s.recvfrom(65535)
         except socket.timeout:
             continue
-        p = int.from_bytes(d[:8], "big")
-        ct, wt = d[8:-16], d[-16:]
+        if len(d) != TRANSPORT_SLOT_BYTES or any(d[AUTHENTICATED_BODY_BYTES:]):
+            bad += 1
+            print("FAIL %s invalid 1280-byte slot/padding" % label, flush=True)
+            continue
+        body = d[:AUTHENTICATED_BODY_BYTES]
+        p = int.from_bytes(body[:8], "big")
+        ct, wt = body[8:-16], body[-16:]
         n = b"\x00\x00\x00\x01" + p.to_bytes(8, "big")
         try:
             AESGCM(KEY).decrypt(n, ct + wt, b"")
