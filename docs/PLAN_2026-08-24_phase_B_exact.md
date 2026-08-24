@@ -184,13 +184,19 @@ batch into 32 wire packets with correct headers and checksums at measured
   1. UDP socket, `setsockopt(IPPROTO_UDP, UDP_SEGMENT, 1240)`, SNDBUF 4 MiB,
      connect() to PC.
   2. Pin to CPU1, RT priority (E14: 650 MHz — leave CPU0 for IRQ + kernel).
-  3. Loop: read produce_idx (1 MMIO read); if >= 32 new packets:
-     `dcache_invalidate(ring_slot_ptr, 32*1240)`; ONE `send(sock,
-     ring_slot_ptr, 32*1240, 0)` — payload read DIRECTLY from the mmap'd
-     ring (no copy, no staging buffer); then write consume_idx (1 MMIO
-     write). If < 32 and ring not empty for > 2 ms, send a short batch.
-  4. Keep the 1 s stats print: batches/s, pkts/s, syscalls/s, cache us,
-     drops.
+  3. Loop: read produce_idx (1 MMIO read). For each batch of up to 32
+     packets, locate source slot `ring_base + index*1280` and copy only its
+     first 1240 valid bytes into a contiguous PS staging buffer at
+     `batch_buffer + packet_index*1240`. The 40-byte slot padding is never
+     copied. Invalidate the source ring range before reading it; for a
+     non-wrapping batch this is one range from the first slot through the
+     last slot's final valid byte. For a wrapping batch, invalidate the two
+     ranges. Then make ONE `send(sock, batch_buffer, count*1240, 0)` call
+     with UDP_SEGMENT=1240, and write consume_idx (1 MMIO write). If fewer
+     than 32 packets wait until the oldest packet is 2 ms old, then send a
+     short whole-packet batch.
+  4. Keep the 1 s stats print: batches/s, pkts/s, syscalls/s, source-copy
+     us, cache-invalidate us, drops, and short-batch count.
 - Keep `--dst-host/--dst-port` argv. Mode flags `nosend`/`nocopy` stay.
 
 ### Where
@@ -200,22 +206,24 @@ batch into 32 wire packets with correct headers and checksums at measured
   addresses, keep sequencer-disabled-until-shim handshake.
 
 ### How
-- UDP GSO: buffer of N*1240 B sent as one datagram; kernel emits N packets
-  (ports from the connected socket; same src/dst for all segments — matches
-  our stream).
+- UDP GSO: the contiguous PS staging buffer of N*1240 B is sent as one
+  UDP GSO request; the kernel emits N packets. The source DDR slots remain
+  1280-byte stride, but only 1240 bytes per slot are copied.
 - Batch size 32: 32*1240 = 39,680 B < 65,535 UDP limit (batch 64 =
-  79,360 > limit — measured EMSGSIZE). If a bigger batch is wanted later,
-  use sendmmsg with multiple GSO datagrams (measured dual-core 82k).
+  79,360 > limit and produced EMSGSIZE). If a bigger batch is wanted later,
+  use multiple GSO requests.
 
 ### Why
-- E9: GSO is the ONLY measured PS path above the 70.56k requirement
-  (73k sustained single-core, 100% delivered, 30 s).
+- E9: GSO is the only measured PS path above the 70.56k requirement
+  (73k sustained single-core, 100% delivered, 30 s) for a contiguous
+  userspace buffer.
 - E7/E8/E12: all per-packet-syscall paths cap at 33-53k — structurally
   insufficient; no amount of tuning closes 1.4-2x.
 - E10/E11: TX_RING and QDISC_BYPASS are disqualified by kernel bugs.
-- Software-only per-packet work after this change: 1/32 MMIO read,
-  1/32 MMIO write, 1/32 cache-flush of 39 KiB, 1/32 syscall. At 70.56k pps:
-  2,205 syscalls/s, ~2.2k MMIO ops/s — negligible vs the 14.2 us budget.
+- The new ring path adds one measured operation that E9 did not include:
+  copying 32 separated 1240-byte regions into one contiguous 39,680-byte
+  buffer. At 70.56k pps this is about 2,205 batch copies/s. Its time and
+  cache cost must be measured in G3a; they must not be inferred from E9.
 
 ### Success criteria
 - G3a: pattern flood end-to-end (ring + GSO shim + PC sink):
@@ -227,19 +235,24 @@ batch into 32 wire packets with correct headers and checksums at measured
 
 ### Gotchas
 - UDP_SEGMENT requires kernel >= 4.18 (board: 6.6.10 ✓, verified by probe).
-- The GSO buffer must be the DDR ring mmap (PROT_READ is enough for send;
-  keep O_SYNC mapping so invalidate+read sees fresh DMA data — the
-  dcache_invalidate invariant that broke auth last time stays sacred).
-- Batch boundary = slot boundary. NEVER send a partial packet; the ring's
-  packet-aligned writes guarantee this if consume/produce are used as
-  designed.
+- The GSO buffer is a contiguous PS staging buffer. The DDR ring is not
+  passed directly to send(), because B.2 uses 1280-byte stride and has
+  40-byte padding after each 1240-byte packet.
+- Keep O_SYNC mapping and invalidate every PL-written source slot before
+  reading it — the dcache_invalidate invariant that broke auth last time
+  stays sacred.
+- Batch boundary = slot boundary. NEVER send a partial packet. Copy exactly
+  1240 bytes from each slot and no padding bytes.
 - PC sink fragility: ANY Windows NIC property change (jumbo toggle, adapter
   reset) silently kills the receiver — killed our measurements twice. The
   receiver must be verified ALIVE (line count grows) before any rate claim.
 - EMSGSIZE at batch>52 (=65535/1240): clamp batch to 32.
-- If E9 margin (73k vs 70.56k = 3.5%) proves too tight with real video
-  load: second GSO sender thread on CPU0 (measured 82k aggregate) — do NOT
-  fall back to per-packet syscalls.
+- E9's 73k result used a contiguous buffer and has only 3.5% margin over
+  70.56k. The separated-slot copy can reduce that margin. G3a must measure
+  the complete ring-copy + GSO path. If it is too tight, use a second GSO
+  sender thread on CPU0 (82k aggregate was measured), increase the batch
+  size through multiple GSO requests, or select the larger payload option;
+  do NOT fall back to per-packet syscalls.
 
 ---
 
