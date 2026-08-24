@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
-<EDKSYSTEM EDWVERSION="1.2" TIMESTAMP="Mon Aug 24 16:07:33 2026" VIVADOVERSION="2024.1.2">
+<EDKSYSTEM EDWVERSION="1.2" TIMESTAMP="Mon Aug 24 19:08:31 2026" VIVADOVERSION="2024.1.2">
 
   <SYSTEMINFO ARCH="zynq" BOARD="tul.com.tw:pynq-z2:part0:1.0" DEVICE="7z020" NAME="hdmi_aes_tx" PACKAGE="clg400" SPEEDGRADE="-1"/>
 
@@ -235,7 +235,7 @@
     <MODULE COREREVISION="1" FULLNAME="/aes_clk_mux" HWVERSION="1.0" INSTANCE="aes_clk_mux" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="clk_mux_ctrl" VLNV="xilinx.com:module_ref:clk_mux_ctrl:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_clk_mux_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_clk_mux_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -290,7 +290,7 @@
       <PARAMETERS>
         <PARAMETER NAME="C_S_AXI_ADDR_WIDTH" VALUE="8"/>
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_gcm_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_gcm_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
         <PARAMETER NAME="C_BASEADDR" VALUE="0x00000000"/>
         <PARAMETER NAME="C_HIGHADDR" VALUE="0x000001FF"/>
@@ -691,7 +691,7 @@
       <PARAMETERS>
         <PARAMETER NAME="C_AXI_ADDR_WIDTH" VALUE="9"/>
         <PARAMETER NAME="C_AXI_DATA_WIDTH" VALUE="32"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_seq_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_aes_seq_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
         <PARAMETER NAME="C_BASEADDR" VALUE="0x40001000"/>
         <PARAMETER NAME="C_HIGHADDR" VALUE="0x40001FFF"/>
@@ -1547,7 +1547,7 @@
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
         <PARAMETER NAME="C_TRI_DEFAULT" VALUE="0xFFFFFFFF"/>
         <PARAMETER NAME="C_TRI_DEFAULT_2" VALUE="0xFFFFFFFF"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_clkctrl_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_clkctrl_2"/>
         <PARAMETER NAME="GPIO2_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="GPIO_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
@@ -1664,7 +1664,7 @@
           <PARAMETER NAME="ARUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="AWUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="BUSER_WIDTH" VALUE="0"/>
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK0"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK0"/>
           <PARAMETER NAME="DATA_WIDTH" VALUE="32"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_BRESP" VALUE="1"/>
@@ -1904,7 +1904,7 @@
         <PARAMETER NAME="C_S_AXI_DATA_WIDTH" VALUE="32"/>
         <PARAMETER NAME="C_TRI_DEFAULT" VALUE="0xFFFFFFFF"/>
         <PARAMETER NAME="C_TRI_DEFAULT_2" VALUE="0xFFFFFFFF"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_hdmiin_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_axi_gpio_hdmiin_2"/>
         <PARAMETER NAME="GPIO2_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="GPIO_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
@@ -2092,7 +2092,7 @@
     <MODULE COREREVISION="1" FULLNAME="/cdc_out_probe_0" HWVERSION="1.0" INSTANCE="cdc_out_probe_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoBeatCounter_wrapper" VLNV="xilinx.com:module_ref:VideoBeatCounter_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_cdc_out_probe_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_cdc_out_probe_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -2531,7 +2531,7 @@
         <PARAMETER NAME="C_USE_STATUS" VALUE="0"/>
         <PARAMETER NAME="C_VCO_MAX" VALUE="1200.000"/>
         <PARAMETER NAME="C_VCO_MIN" VALUE="600.000"/>
-        <PARAMETER NAME="c_component_name" VALUE="hdmi_aes_tx_clk_wiz_aes_1"/>
+        <PARAMETER NAME="c_component_name" VALUE="hdmi_aes_tx_clk_wiz_aes_2"/>
         <PARAMETER NAME="AUTO_PRIMITIVE" VALUE="MMCM"/>
         <PARAMETER NAME="AXI_DRP" VALUE="false"/>
         <PARAMETER NAME="CALC_DONE" VALUE="empty"/>
@@ -2632,7 +2632,7 @@
         <PARAMETER NAME="CLK_OUT7_USE_FINE_PS_GUI" VALUE="false"/>
         <PARAMETER NAME="CLK_VALID_PORT" VALUE="CLK_VALID"/>
         <PARAMETER NAME="CLOCK_MGR_TYPE" VALUE="auto"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clk_wiz_aes_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clk_wiz_aes_2"/>
         <PARAMETER NAME="DADDR_PORT" VALUE="daddr"/>
         <PARAMETER NAME="DCLK_PORT" VALUE="dclk"/>
         <PARAMETER NAME="DEN_PORT" VALUE="den"/>
@@ -2820,7 +2820,7 @@
         <PARAMETER NAME="DIN_FROM" VALUE="0"/>
         <PARAMETER NAME="DIN_TO" VALUE="0"/>
         <PARAMETER NAME="DIN_WIDTH" VALUE="3"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_rst_slice_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_rst_slice_2"/>
         <PARAMETER NAME="DOUT_WIDTH" VALUE="1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
@@ -2844,7 +2844,7 @@
         <PARAMETER NAME="DIN_FROM" VALUE="2"/>
         <PARAMETER NAME="DIN_TO" VALUE="1"/>
         <PARAMETER NAME="DIN_WIDTH" VALUE="3"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_sel_slice_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_clkctrl_sel_slice_2"/>
         <PARAMETER NAME="DOUT_WIDTH" VALUE="2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
@@ -2867,7 +2867,7 @@
       <PARAMETERS>
         <PARAMETER NAME="input_format" VALUE="rbg"/>
         <PARAMETER NAME="output_format" VALUE="rgb"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_color_swap_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_color_swap_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -2943,7 +2943,7 @@
         <PARAMETER NAME="kIDLY_TapValuePs" VALUE="78"/>
         <PARAMETER NAME="kIDLY_TapWidth" VALUE="5"/>
         <PARAMETER NAME="kRstActiveHigh" VALUE="false"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_dvi2rgb_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_dvi2rgb_0_2"/>
         <PARAMETER NAME="IIC_BOARD_INTERFACE"/>
         <PARAMETER NAME="TMDS_BOARD_INTERFACE"/>
         <PARAMETER NAME="kEnableSerialClkOutput" VALUE="false"/>
@@ -3087,7 +3087,7 @@
         <PARAMETER NAME="RING_LOG2" VALUE="11"/>
         <PARAMETER NAME="SLOT_STRIDE" VALUE="1280"/>
         <PARAMETER NAME="VERSION_VALUE" VALUE="0x00020000"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_frame_writer_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_frame_writer_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
         <PARAMETER NAME="C_BASEADDR" VALUE="0x40000000"/>
         <PARAMETER NAME="C_HIGHADDR" VALUE="0x40000FFF"/>
@@ -3503,7 +3503,7 @@
         <PARAMETER NAME="C_SYNCHRONIZER_STAGE" VALUE="3"/>
         <PARAMETER NAME="C_USE_ADV_FEATURES" VALUE="825241648"/>
         <PARAMETER NAME="ACLKEN_CONV_MODE" VALUE="0"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_axis_cdc_fifo_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_axis_cdc_fifo_2"/>
         <PARAMETER NAME="ENABLE_ECC" VALUE="0"/>
         <PARAMETER NAME="FIFO_DEPTH" VALUE="2048"/>
         <PARAMETER NAME="FIFO_MEMORY_TYPE" VALUE="auto"/>
@@ -3598,7 +3598,7 @@
       </PORTS>
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="video_beat_counter_0_m_axis_video" NAME="S_AXIS" TYPE="SLAVE" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -3647,7 +3647,7 @@
       <DOCUMENTS/>
       <PARAMETERS>
         <PARAMETER NAME="MAX_PAYLOAD_BYTES" VALUE="1200"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_packetizer_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hdmi_packetizer_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -3814,7 +3814,7 @@
         <DOCUMENT SOURCE="http://www.xilinx.com/cgi-bin/docs/ipdoc?c=axi_interconnect;v=v2_1;d=pg059-axi-interconnect.pdf"/>
       </DOCUMENTS>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hp0_mem_ic_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_hp0_mem_ic_2"/>
         <PARAMETER NAME="ENABLE_ADVANCED_OPTIONS" VALUE="0"/>
         <PARAMETER NAME="ENABLE_PROTOCOL_CHECKERS" VALUE="0"/>
         <PARAMETER NAME="M00_HAS_DATA_FIFO" VALUE="0"/>
@@ -4637,7 +4637,7 @@
         <PARAMETER NAME="IN9_WIDTH" VALUE="1"/>
         <PARAMETER NAME="NUM_PORTS" VALUE="3"/>
         <PARAMETER NAME="dout_width" VALUE="3"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_irq_concat_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_irq_concat_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -4667,7 +4667,7 @@
     <MODULE COREREVISION="1" FULLNAME="/nonce_prefix_0" HWVERSION="1.0" INSTANCE="nonce_prefix_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="NoncePrefixInject_wrapper" VLNV="xilinx.com:module_ref:NoncePrefixInject_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_nonce_prefix_0_0"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_nonce_prefix_0_1"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -4806,7 +4806,7 @@
         <PARAMETER NAME="C_SYNCHRONIZER_STAGE" VALUE="3"/>
         <PARAMETER NAME="C_USE_ADV_FEATURES" VALUE="826486851"/>
         <PARAMETER NAME="ACLKEN_CONV_MODE" VALUE="0"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_packet_seq_fifo_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_packet_seq_fifo_0_2"/>
         <PARAMETER NAME="ENABLE_ECC" VALUE="0"/>
         <PARAMETER NAME="FIFO_DEPTH" VALUE="256"/>
         <PARAMETER NAME="FIFO_MEMORY_TYPE" VALUE="auto"/>
@@ -5015,7 +5015,7 @@
         <PARAMETER NAME="C_USE_S_AXI_HP2" VALUE="0"/>
         <PARAMETER NAME="C_USE_S_AXI_HP3" VALUE="0"/>
         <PARAMETER NAME="USE_TRACE_DATA_EDGE_DETECTOR" VALUE="0"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_2"/>
         <PARAMETER NAME="PCW_ACT_APU_PERIPHERAL_FREQMHZ" VALUE="666.666687"/>
         <PARAMETER NAME="PCW_ACT_CAN0_PERIPHERAL_FREQMHZ" VALUE="23.8095"/>
         <PARAMETER NAME="PCW_ACT_CAN1_PERIPHERAL_FREQMHZ" VALUE="23.8095"/>
@@ -6473,7 +6473,7 @@
           <PARAMETER NAME="ARUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="AWUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="BUSER_WIDTH" VALUE="0"/>
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK0"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK0"/>
           <PARAMETER NAME="DATA_WIDTH" VALUE="32"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_BRESP" VALUE="1"/>
@@ -6546,7 +6546,7 @@
           <PARAMETER NAME="ARUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="AWUSER_WIDTH" VALUE="0"/>
           <PARAMETER NAME="BUSER_WIDTH" VALUE="0"/>
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK0"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK0"/>
           <PARAMETER NAME="DATA_WIDTH" VALUE="64"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="100000000"/>
           <PARAMETER NAME="HAS_BRESP" VALUE="1"/>
@@ -6630,7 +6630,7 @@
         <DOCUMENT SOURCE="http://www.xilinx.com/cgi-bin/docs/ipdoc?c=axi_interconnect;v=v2_1;d=pg059-axi-interconnect.pdf"/>
       </DOCUMENTS>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_axi_periph_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_ps7_axi_periph_2"/>
         <PARAMETER NAME="ENABLE_ADVANCED_OPTIONS" VALUE="0"/>
         <PARAMETER NAME="ENABLE_PROTOCOL_CHECKERS" VALUE="0"/>
         <PARAMETER NAME="M00_HAS_DATA_FIFO" VALUE="0"/>
@@ -7813,7 +7813,7 @@
       <PARAMETERS>
         <PARAMETER NAME="CONST_VAL" VALUE="0x1"/>
         <PARAMETER NAME="CONST_WIDTH" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_const1_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_const1_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -7842,7 +7842,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_pixelclk_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_pixelclk_2"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -7901,7 +7901,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_100m_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_100m_2"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -7972,7 +7972,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_142m_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_142m_2"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -8024,7 +8024,7 @@
         <PARAMETER NAME="C_NUM_INTERCONNECT_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_ARESETN" VALUE="1"/>
         <PARAMETER NAME="C_NUM_PERP_RST" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_stable_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rst_ps7_stable_2"/>
         <PARAMETER NAME="RESET_BOARD_INTERFACE" VALUE="Custom"/>
         <PARAMETER NAME="USE_BOARD_FLOW" VALUE="false"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
@@ -8070,7 +8070,7 @@
       <PARAMETERS>
         <PARAMETER NAME="C_OPERATION" VALUE="not"/>
         <PARAMETER NAME="C_SIZE" VALUE="1"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rstn_to_rst_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_rstn_to_rst_2"/>
         <PARAMETER NAME="LOGO_FILE" VALUE="data/sym_notgate.png"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
@@ -8111,7 +8111,7 @@
         <PARAMETER NAME="C_VID_NATIVE_DE" VALUE="0"/>
         <PARAMETER NAME="C_M_AXIS_VIDEO_DATA_WIDTH" VALUE="8"/>
         <PARAMETER NAME="C_M_AXIS_VIDEO_FORMAT" VALUE="2"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_v_vid_in_axi4s_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_v_vid_in_axi4s_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -8213,7 +8213,7 @@
       </PORTS>
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="v_vid_in_axi4s_0_video_out" NAME="video_out" TYPE="INITIATOR" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -8254,7 +8254,7 @@
     <MODULE COREREVISION="1" FULLNAME="/video_beat_counter_0" HWVERSION="1.0" INSTANCE="video_beat_counter_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoBeatCounter_wrapper" VLNV="xilinx.com:module_ref:VideoBeatCounter_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_beat_counter_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_beat_counter_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -8336,7 +8336,7 @@
       </PORTS>
       <BUSINTERFACES>
         <BUSINTERFACE BUSNAME="video_beat_counter_0_m_axis_video" NAME="m_axis_video" TYPE="MASTER" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -8358,7 +8358,7 @@
           </PORTMAPS>
         </BUSINTERFACE>
         <BUSINTERFACE BUSNAME="v_vid_in_axi4s_0_video_out" NAME="s_axis_video" TYPE="TARGET" VLNV="xilinx.com:interface:axis:1.0">
-          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_1_FCLK_CLK1"/>
+          <PARAMETER NAME="CLK_DOMAIN" VALUE="hdmi_aes_tx_ps7_2_FCLK_CLK1"/>
           <PARAMETER NAME="FREQ_HZ" VALUE="142857132"/>
           <PARAMETER NAME="HAS_TKEEP" VALUE="0"/>
           <PARAMETER NAME="HAS_TLAST" VALUE="1"/>
@@ -8384,7 +8384,7 @@
     <MODULE COREREVISION="1" FULLNAME="/video_fe_probe_0" HWVERSION="1.0" INSTANCE="video_fe_probe_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoFrontEndProbe_wrapper" VLNV="xilinx.com:module_ref:VideoFrontEndProbe_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_fe_probe_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_fe_probe_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -8476,7 +8476,7 @@
     <MODULE COREREVISION="1" FULLNAME="/video_status_probe_0" HWVERSION="1.0" INSTANCE="video_status_probe_0" IPTYPE="PERIPHERAL" IS_ENABLE="1" MODCLASS="PERIPHERAL" MODTYPE="VideoStatusProbe_wrapper" VLNV="xilinx.com:module_ref:VideoStatusProbe_wrapper:1.0">
       <DOCUMENTS/>
       <PARAMETERS>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_status_probe_0_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_video_status_probe_0_2"/>
         <PARAMETER NAME="EDK_IPTYPE" VALUE="PERIPHERAL"/>
       </PARAMETERS>
       <PORTS>
@@ -8622,7 +8622,7 @@
         <PARAMETER NAME="C_VID_PPC" VALUE="4"/>
         <PARAMETER NAME="ARBITRARY_RES_EN" VALUE="false"/>
         <PARAMETER NAME="C_FAMILY" VALUE="virtex7"/>
-        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_vtc_in_1"/>
+        <PARAMETER NAME="Component_Name" VALUE="hdmi_aes_tx_vtc_in_2"/>
         <PARAMETER NAME="DET_FIELDID_EN" VALUE="false"/>
         <PARAMETER NAME="FSYNC_HSTART0" VALUE="0"/>
         <PARAMETER NAME="FSYNC_HSTART1" VALUE="0"/>
