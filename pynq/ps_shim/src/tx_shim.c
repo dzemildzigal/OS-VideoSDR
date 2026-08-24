@@ -74,7 +74,9 @@
 #define MAX_GSO_SLOTS           32u
 #define SHORT_BATCH_DELAY_NS    2000000ULL
 
+#ifndef __ARM_NR_cacheflush
 #define __ARM_NR_cacheflush 0x0f0002u
+#endif
 
 typedef struct {
     const char *dst_ip;
