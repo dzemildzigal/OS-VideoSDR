@@ -277,9 +277,12 @@ def run(args: argparse.Namespace) -> None:
         gpio_info = overlay.ip_dict["axi_gpio_hdmiin"]
         hdmi_gpio = HdmiFrontEndGpio(pynq.MMIO(gpio_info["phys_addr"], gpio_info["addr_range"]))
         if args.force_hpd:
-            # Force the source to re-read the EDID after each overlay load.
-            # Without a real HPD transition, an already-connected source can
-            # keep its previous 720p60 mode.
+            # Force the source to re-read the EDID after each overlay load,
+            # so an already-connected source always renegotiates against the
+            # current EDID rather than keeping a stale prior mode. The board
+            # now advertises the stock 720p60 EDID (see the AES repository's
+            # build script); 30 fps is produced by 2:1 packetizer decimation
+            # against that real 60 Hz source, not by a custom 30 Hz EDID.
             hdmi_gpio.set_hpd(False)
             time.sleep(0.250)
             hdmi_gpio.set_hpd(True)
