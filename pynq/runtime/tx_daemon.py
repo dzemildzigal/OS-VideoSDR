@@ -1,7 +1,7 @@
 """HDMI AES TX daemon.
 
-Loads the PYNQ overlay, configures the AES session sequencer and the B.2 DDR
-packet ring, then holds the overlay and buffers for the B.3 C GSO sender."
+Loads the PYNQ overlay and configures the AES session sequencer, then
+holds the overlay open for the B.3 tx_shim process.
 
 Usage:
   python tx_daemon.py \\
@@ -10,14 +10,20 @@ Usage:
     --key-hex 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
 
 The daemon:
-  1. Loads the bitstream and programs the sequencer (key / session / nonce).
-  2. Allocates one contiguous 2048-slot ring and one separate 4 KiB control
-     page via pynq.allocate, then programs both physical addresses into the
-     B.2 DDRRingWriter.
-  3. Enables stream-source mode. The B.2 writer publishes complete 1280-byte
-     slots; the B.3 tx_shim drains them with UDP GSO.
-  4. In configure-only mode, holds the overlay and allocations open until
-     tx_shim exits or the daemon receives Ctrl-C.
+  1. Loads the bitstream and programs the sequencer (key / session / nonce),
+     leaving it DISABLED until tx_shim enables it.
+  2. Pulses HDMI HPD and reads pixel lock.
+  3. In configure-only mode, holds the overlay open and waits.
+
+tx_shim (a separate native-XRT C++ process, not this daemon) now owns the
+B.2 DDR ring and control-page buffers: it allocates them as XRT buffer
+objects, writes their physical addresses into frame_writer_0's registers,
+and enables the ring writer, before enabling the sequencer. This daemon
+never allocates ring memory and never touches frame_writer_0's registers.
+See tx_shim.cpp for why: a single owner with one consistently-attributed
+mapping replaces the previous split ownership (this daemon allocating,
+tx_shim separately mapping the same physical pages via /dev/mem), which
+risked ARM's undefined "mismatched memory attribute" condition.
 """
 
 from __future__ import annotations
@@ -29,34 +35,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-# ---------------------------------------------------------------------------
-# DDRRingWriter / frame_writer_0 register offsets
-# ---------------------------------------------------------------------------
-REG_VERSION           = 0x0000
-REG_CONTROL           = 0x0004   # [0] enable
-REG_STATUS            = 0x0008   # [0] enabled [1] fault
-REG_RING_BASE_LO      = 0x000C
-REG_RING_BASE_HI      = 0x0010
-REG_CTRL_BASE_LO      = 0x0014
-REG_CTRL_BASE_HI      = 0x0018
-REG_RING_LOG2         = 0x001C
-REG_SLOT_STRIDE       = 0x0020
-REG_PRODUCE_IDX       = 0x0024
-REG_CONSUME_SHADOW    = 0x0028
-REG_DROP_COUNT        = 0x002C
-REG_COMPLETE_COUNT_LO = 0x0030
-REG_COMPLETE_COUNT_HI = 0x0034
-REG_FAULT_CODE        = 0x003C
-REG_WRITER_STATUS     = 0x0008
-
 # AXI AES-GCM stream register map (subset)
 AES_REG_STATUS        = 0x0004
-
-RING_LOG2 = 11
-RING_SLOTS = 1 << RING_LOG2
-SLOT_STRIDE = 1280
-RING_BYTES = RING_SLOTS * SLOT_STRIDE
-CONTROL_PAGE_BYTES = 4096
 
 # AXI GPIO register map (xilinx.com:ip:axi_gpio:2.0)
 GPIO_DATA     = 0x00  # channel 1 data (used for hdmi_in_hpd)
@@ -92,46 +72,6 @@ def _load_pynq() -> Any:
         raise RuntimeError(f"pynq package missing Overlay/MMIO: {getattr(pynq_mod, '__file__', '?')}")
 
     return pynq_mod
-
-
-class DdrRingWriter:
-    """Register-level driver for frame_writer_0 (B.2 DDRRingWriter)."""
-
-    def __init__(self, mmio: Any) -> None:
-        self._m = mmio
-
-    def wr(self, off: int, val: int) -> None:
-        self._m.write(off, int(val) & 0xFFFF_FFFF)
-
-    def rd(self, off: int) -> int:
-        return int(self._m.read(off)) & 0xFFFF_FFFF
-
-    def soft_reset(self) -> None:
-        self.wr(REG_CONTROL, 0)
-        time.sleep(0.001)
-
-    def configure_ring(self, ring_phys: int, ctrl_phys: int) -> None:
-        self.wr(REG_RING_BASE_LO, ring_phys & 0xFFFF_FFFF)
-        self.wr(REG_RING_BASE_HI, (ring_phys >> 32) & 0xFFFF_FFFF)
-        self.wr(REG_CTRL_BASE_LO, ctrl_phys & 0xFFFF_FFFF)
-        self.wr(REG_CTRL_BASE_HI, (ctrl_phys >> 32) & 0xFFFF_FFFF)
-
-    def enable_stream_writer(self) -> None:
-        self.wr(REG_CONTROL, 0x1)
-
-    def ring_config(self) -> dict:
-        ring = self.rd(REG_RING_BASE_LO) | (self.rd(REG_RING_BASE_HI) << 32)
-        ctrl = self.rd(REG_CTRL_BASE_LO) | (self.rd(REG_CTRL_BASE_HI) << 32)
-        return {
-            "ring_base": ring,
-            "ctrl_base": ctrl,
-            "ring_log2": self.rd(REG_RING_LOG2),
-            "slot_stride": self.rd(REG_SLOT_STRIDE),
-        }
-
-    def writer_status(self) -> dict:
-        ws = self.rd(REG_STATUS)
-        return {"enabled": ws & 0x1, "fault": (ws >> 1) & 0x1}
 
 
 class HdmiFrontEndGpio:
@@ -184,7 +124,6 @@ class AesCoreStatus:
 def run(args: argparse.Namespace) -> None:
     pynq = _load_pynq()
     Overlay = pynq.Overlay
-    allocate = pynq.allocate
 
     bit_path = Path(args.bitstream).expanduser().resolve()
     if not bit_path.exists():
@@ -264,14 +203,6 @@ def run(args: argparse.Namespace) -> None:
     )
 
     # --- Set up the B.2 DDR packet ring writer ---
-    if "frame_writer_0" not in overlay.ip_dict:
-        raise KeyError(f"frame_writer_0 not in overlay. Available: {list(overlay.ip_dict)}")
-
-    fw_info = overlay.ip_dict["frame_writer_0"]
-    import numpy as np  # noqa: PLC0415
-    fw = DdrRingWriter(pynq.MMIO(fw_info["phys_addr"], fw_info["addr_range"]))
-    fw.soft_reset()
-
     hdmi_gpio = None
     if "axi_gpio_hdmiin" in overlay.ip_dict:
         gpio_info = overlay.ip_dict["axi_gpio_hdmiin"]
@@ -306,53 +237,17 @@ def run(args: argparse.Namespace) -> None:
     else:
         print("[tx_daemon] WARNING: aes_gcm_0 missing; cannot read AES status.")
 
-    # B.2 writes one 1240-byte authenticated body plus 40 zero transport
-    # bytes into each 1280-byte slot. Allocate the ring and its control page
-    # separately so the PS can map the control words independently.
-    ring_buf = allocate(shape=(RING_BYTES,), dtype=np.uint8)
-    ctrl_buf = allocate(shape=(CONTROL_PAGE_BYTES,), dtype=np.uint8)
-    ring_phys = int(ring_buf.physical_address)
-    ctrl_phys = int(ctrl_buf.physical_address)
-    if ring_phys & 0x7F:
-        raise RuntimeError(f"B.2 ring allocation is not 128-byte aligned: 0x{ring_phys:X}")
-    if ctrl_phys & 0xFFF:
-        raise RuntimeError(f"B.2 control allocation is not page aligned: 0x{ctrl_phys:X}")
-    if ((ring_phys <= ctrl_phys < ring_phys + RING_BYTES) or
-            (ctrl_phys <= ring_phys < ctrl_phys + CONTROL_PAGE_BYTES)):
-        raise RuntimeError("B.2 control page overlaps the ring allocation")
-    ctrl_buf[:] = 0
-    if hasattr(ctrl_buf, "flush"):
-        ctrl_buf.flush()
-    print(f"[tx_daemon] DDR ring @ 0x{ring_phys:08X} ({RING_SLOTS} x {SLOT_STRIDE} = {RING_BYTES} bytes)")
-    print(f"[tx_daemon] DDR ctrl @ 0x{ctrl_phys:08X} ({CONTROL_PAGE_BYTES} bytes)")
-
-    fw.configure_ring(ring_phys, ctrl_phys)
-    ring_cfg = fw.ring_config()
-    if ring_cfg != {
-        "ring_base": ring_phys,
-        "ctrl_base": ctrl_phys,
-        "ring_log2": RING_LOG2,
-        "slot_stride": SLOT_STRIDE,
-    }:
-        raise RuntimeError(f"B.2 ring register readback mismatch: {ring_cfg}")
-    fw.enable_stream_writer()
-    print(f"[tx_daemon] DDR ring writer enabled. Config={ring_cfg} status={fw.writer_status()}")
-
     if args.configure_only:
-        # Hold the overlay and allocations open so tx_shim can map and drain
-        # the ring through the writer's physical-address registers.
+        # tx_shim owns the B.2 ring/control buffers and frame_writer_0's
+        # registers now (see the module docstring). This process only
+        # holds the overlay and the sequencer configuration open.
         print(
-            "[tx_daemon] configure-only mode: ring held, no Python send loop; "
-            "sequencer DISABLED until tx_shim enables it",
+            "[tx_daemon] configure-only mode: overlay and sequencer held; "
+            "ring ownership and writer/sequencer enable belong to tx_shim now",
             flush=True,
         )
-        try:
-            while True:
-                time.sleep(3600)
-        finally:
-            fw.wr(REG_CONTROL, 0)
-            ring_buf.freebuffer()
-            ctrl_buf.freebuffer()
+        while True:
+            time.sleep(3600)
 
 
 
