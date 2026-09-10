@@ -74,6 +74,12 @@
 #define REG_SLOT_STRIDE         0x0020u
 #define REG_DROP_COUNT          0x002Cu
 #define REG_COMPLETE_COUNT_LO   0x0030u
+// PS-pushed consume index. The writer takes its full-ring drop decision from
+// this register instead of reading the control page over its AXI master port,
+// because that read returns the writer's own produce word on this hardware
+// (the HP0 read path mis-answers a 4-byte read at +4 inside the 8-byte region
+// the publish write touches). Push it after every sent batch.
+#define REG_PS_CONSUME          0x0048u
 
 #define REG_SEQ_CONTROL         0x0000u
 
@@ -453,6 +459,9 @@ int main(int argc, char **argv)
             sent_slots += part_slots;
             consume = (batch_start + sent_slots) & ring_mask;
             ctrl_store_release(&ctrl[1], consume);
+            // Push the consume index to the writer over AXI-Lite. This is the
+            // value the writer uses for its full-ring drop decision.
+            wr32(fw, REG_PS_CONSUME, consume);
             stat_pkts += part_slots;
             stat_slot_bytes += (uint64_t)part_slots * slot_stride;
         }
