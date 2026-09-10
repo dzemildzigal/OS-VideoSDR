@@ -46,8 +46,10 @@
 #include <cstring>
 #include <fcntl.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <sched.h>
 #include <sys/mman.h>
+#include <sys/file.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -74,6 +76,9 @@
 #define REG_SLOT_STRIDE         0x0020u
 #define REG_DROP_COUNT          0x002Cu
 #define REG_COMPLETE_COUNT_LO   0x0030u
+// Read-only: 1 when the writer reaches DDR through the PS ACP, so its writes
+// snoop the CPU caches and no invalidate is needed before reading slots.
+#define REG_COHERENT            0x004Cu
 // PS-pushed consume index. The writer takes its full-ring drop decision from
 // this register instead of reading the control page over its AXI master port,
 // because that read returns the writer's own produce word on this hardware
@@ -265,6 +270,196 @@ static int send_gso(int sock, const void *data, size_t bytes, int do_send)
     return 0;
 }
 
+static int make_tx_socket(const Options &opt, uint32_t slot_stride)
+{
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        perror("socket");
+        return -1;
+    }
+    int sndbuf = 4 * 1024 * 1024;
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
+        perror("setsockopt(SO_SNDBUF)");
+
+    int segment_size = (int)slot_stride;
+    if (setsockopt(sock, IPPROTO_UDP, UDP_SEGMENT,
+                   &segment_size, sizeof(segment_size)) < 0) {
+        perror("setsockopt(UDP_SEGMENT=1280)");
+        close(sock);
+        return -1;
+    }
+
+    struct sockaddr_in dst;
+    memset(&dst, 0, sizeof(dst));
+    dst.sin_family = AF_INET;
+    dst.sin_port = htons(opt.dst_port);
+    if (inet_pton(AF_INET, opt.dst_ip, &dst.sin_addr) != 1) {
+        fprintf(stderr, "bad destination IP: %s\n", opt.dst_ip);
+        close(sock);
+        return -1;
+    }
+    if (connect(sock, (const struct sockaddr *)&dst, sizeof(dst)) < 0) {
+        perror("connect");
+        close(sock);
+        return -1;
+    }
+    return sock;
+}
+
+// ---------------------------------------------------------------------------
+// Two-core sender.
+//
+// One core cannot pass ~56k packets/s: the kernel TX path costs ~14 us per
+// 1280-byte packet and the cache invalidate adds ~2.6 us. The board has two
+// Cortex-A9 cores and only one was sending.
+//
+// Each worker claims one batch at a time, in order, under a small lock. It then
+// invalidates that batch's range (in its OWN L1 and the shared L2) and sends it
+// from its OWN socket. Each core therefore only ever reads data it has just
+// invalidated, which keeps the design correct without a coherent port.
+//
+// The writer's full-ring frontier is the first batch that is not yet complete,
+// so a slot is only reused after BOTH workers are past it.
+// ---------------------------------------------------------------------------
+typedef struct {
+    pthread_mutex_t  lock;
+    int              sock[2];
+    uint8_t         *ring;
+    uint32_t        *ctrl;
+    volatile uint8_t *fw;
+    uint32_t         ring_slots;
+    uint32_t         ring_mask;
+    uint32_t         slot_stride;
+    int              do_send;
+    int              do_cache;
+    xrt::bo         *ring_bo;
+    uint64_t         claim_batch;    // next batch index to claim
+    uint64_t         release_batch;  // first batch not yet complete
+    uint64_t         done_flags;     // bitmap: batch index % 64 -> complete
+    uint64_t         stat_pkts;
+    uint64_t         stat_batches;
+    uint64_t         stat_sync_ns;
+    uint64_t         stat_send_ns;
+    uint64_t         stat_spins;
+} SendShared;
+
+typedef struct {
+    SendShared *sh;
+    int         idx;
+} WorkerArg;
+
+static void *tx_worker(void *arg)
+{
+    WorkerArg *wa = (WorkerArg *)arg;
+    SendShared *sh = wa->sh;
+    const int idx = wa->idx;
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(idx, &cpuset);
+    if (pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) != 0)
+        perror("pthread_setaffinity (continuing)");
+    // Default scheduling priority on purpose: with two senders both cores are
+    // busy, and a negative nice value starves sshd and systemd (the board became
+    // unreachable once).
+
+    for (;;) {
+        uint64_t batch_index;
+        uint32_t batch_start;
+
+        // Claim the next batch in order, only if the writer has published it.
+        pthread_mutex_lock(&sh->lock);
+        uint32_t produce = ctrl_load_acquire(&sh->ctrl[0]) & sh->ring_mask;
+        batch_index = sh->claim_batch;
+        batch_start = (uint32_t)((batch_index * MAX_GSO_SLOTS) & sh->ring_mask);
+        uint32_t available = (produce - batch_start) & sh->ring_mask;
+        if (available < MAX_GSO_SLOTS) {
+            sh->stat_spins++;
+            pthread_mutex_unlock(&sh->lock);
+            continue;
+        }
+        sh->claim_batch++;
+        pthread_mutex_unlock(&sh->lock);
+
+        // Owned slot range is stable: the writer cannot pass the frontier.
+        uint64_t sync_ns = 0;
+        uint64_t send_ns = 0;
+        for (;;) {
+            uint32_t remaining = MAX_GSO_SLOTS;
+            uint32_t cur = batch_start;
+            int failed = 0;
+            sync_ns = 0;
+            send_ns = 0;
+
+            while (remaining != 0) {
+                uint32_t part_slots = sh->ring_slots - cur;
+                if (part_slots > remaining)
+                    part_slots = remaining;
+                size_t byte_offset = (size_t)cur * sh->slot_stride;
+                size_t part_bytes = (size_t)part_slots * sh->slot_stride;
+                uint8_t *slot_ptr = sh->ring + byte_offset;
+
+                if (sh->do_cache) {
+                    uint64_t c0 = monotonic_ns();
+                    sh->ring_bo->sync(XCL_BO_SYNC_BO_FROM_DEVICE,
+                                      part_bytes, byte_offset);
+                    sync_ns += monotonic_ns() - c0;
+                }
+
+                uint64_t s0 = monotonic_ns();
+                int rc = send_gso(sh->sock[idx], (const void *)slot_ptr,
+                                  part_bytes, sh->do_send);
+                send_ns += monotonic_ns() - s0;
+                if (rc != 0) {
+                    failed = 1;
+                    break;
+                }
+
+                remaining -= part_slots;
+                cur = (cur + part_slots) & sh->ring_mask;
+            }
+
+            if (!failed)
+                break;
+            // Transient send failure (for example no receiver yet): hold this
+            // batch and retry. The slot data cannot change while we own it.
+            usleep(1000);
+        }
+
+        // Complete the batch and advance the reuse frontier.
+        pthread_mutex_lock(&sh->lock);
+        sh->done_flags |= (1ull << (batch_index % 64));
+        while (sh->done_flags & (1ull << (sh->release_batch % 64))) {
+            sh->done_flags &= ~(1ull << (sh->release_batch % 64));
+            sh->release_batch++;
+        }
+        uint32_t frontier = (uint32_t)((sh->release_batch * MAX_GSO_SLOTS) & sh->ring_mask);
+        ctrl_store_release(&sh->ctrl[1], frontier);
+        wr32(sh->fw, REG_PS_CONSUME, frontier);
+        sh->stat_pkts += MAX_GSO_SLOTS;
+        sh->stat_batches++;
+        sh->stat_sync_ns += sync_ns;
+        sh->stat_send_ns += send_ns;
+        pthread_mutex_unlock(&sh->lock);
+    }
+    return NULL;
+}
+
+// Only one sender may own the ring. Two instances fight over the same slots
+// and over the network queues (the board became unreachable that way).
+static int single_instance_guard(void)
+{
+    int fd = open("/var/lock/osv_tx_shim.lock", O_CREAT | O_RDWR, 0644);
+    if (fd < 0)
+        return 0;
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        fprintf(stderr, "tx_shim: another sender instance already owns the ring; exiting\n");
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
 int main(int argc, char **argv)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -276,6 +471,16 @@ int main(int argc, char **argv)
 
     int do_send = strcmp(opt.mode, "send") == 0;
     int do_cache = strcmp(opt.mode, "nocopy") != 0;
+    int guard_fd = single_instance_guard();
+    if (guard_fd < 0)
+        return 1;
+    int force_sync = -1;   // -1 = follow the hardware flag, 1 = force, 0 = off
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--sync") == 0)
+            force_sync = 1;
+        else if (strcmp(argv[i], "--no-sync") == 0)
+            force_sync = 0;
+    }
     if (!do_send || !do_cache)
         printf("tx_shim: MEASURE MODE '%s' - network/cache operation disabled as selected\n",
                opt.mode);
@@ -284,6 +489,20 @@ int main(int argc, char **argv)
     volatile uint8_t *seq = map_devmem(SEQ_BASE, 0x1000);
     if (fw == MAP_FAILED || seq == MAP_FAILED)
         return 1;
+
+    /* The coherent (ACP) build tells us that the PL's writes snoop the CPU
+     * caches, so the per-batch invalidate can be skipped. An explicit
+     * --sync/--no-sync overrides the flag. */
+    if (force_sync == 0) {
+        do_cache = 0;
+        printf("tx_shim: cache maintenance disabled by --no-sync\n");
+    } else if (force_sync == 1) {
+        do_cache = 1;
+        printf("tx_shim: cache maintenance forced on by --sync\n");
+    } else if (rd32(fw, REG_COHERENT) & 1u) {
+        do_cache = 0;
+        printf("tx_shim: writer reports an ACP-coherent path; no cache maintenance needed\n");
+    }
 
     /* Disable the writer before (re)configuring it. Matches the daemon's
      * former soft_reset(); the daemon no longer touches this register. */
@@ -341,6 +560,10 @@ int main(int argc, char **argv)
     wr32(fw, REG_RING_BASE_HI, (uint32_t)((ring_base >> 32) & 0xFFFFFFFFu));
     wr32(fw, REG_CTRL_BASE_LO, (uint32_t)(ctrl_base & 0xFFFFFFFFu));
     wr32(fw, REG_CTRL_BASE_HI, (uint32_t)((ctrl_base >> 32) & 0xFFFFFFFFu));
+    // The writer keeps its PS-consume register across control enable/disable,
+    // so a previous session's value can leave it in a permanent drop state
+    // (produce+1 == stale consume). Initialize it to 0 before enabling.
+    wr32(fw, REG_PS_CONSUME, 0u);
     wr32(fw, REG_WRITER_CONTROL, 1u);
 
     uint32_t ring_mask = ring_slots - 1u;
@@ -354,50 +577,18 @@ int main(int argc, char **argv)
     printf("tx_shim: authenticated body=%u bytes, transport slot=%u bytes\n",
            AUTHENTICATED_BYTES, slot_stride);
 
-    int sock = -1;
+    int socks[2] = {-1, -1};
     if (do_send) {
-        sock = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sock < 0) {
-            perror("socket");
-            return 1;
+        for (int i = 0; i < 2; i++) {
+            socks[i] = make_tx_socket(opt, slot_stride);
+            if (socks[i] < 0)
+                return 1;
         }
-        int sndbuf = 4 * 1024 * 1024;
-        if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
-            perror("setsockopt(SO_SNDBUF)");
-
-        int segment_size = (int)slot_stride;
-        if (setsockopt(sock, IPPROTO_UDP, UDP_SEGMENT,
-                       &segment_size, sizeof(segment_size)) < 0) {
-            perror("setsockopt(UDP_SEGMENT=1280)");
-            close(sock);
-            return 1;
-        }
-
-        struct sockaddr_in dst;
-        memset(&dst, 0, sizeof(dst));
-        dst.sin_family = AF_INET;
-        dst.sin_port = htons(opt.dst_port);
-        if (inet_pton(AF_INET, opt.dst_ip, &dst.sin_addr) != 1) {
-            fprintf(stderr, "bad destination IP: %s\n", opt.dst_ip);
-            close(sock);
-            return 1;
-        }
-        if (connect(sock, (const struct sockaddr *)&dst, sizeof(dst)) < 0) {
-            perror("connect");
-            close(sock);
-            return 1;
-        }
-        printf("tx_shim: UDP GSO segment=%u batch<=%u destination=%s:%u\n",
+        printf("tx_shim: UDP GSO segment=%u batch<=%u destination=%s:%u sockets=2 (one per core)\n",
                slot_stride, MAX_GSO_SLOTS, opt.dst_ip, opt.dst_port);
     }
 
-    cpu_set_t cpuset;
-    CPU_ZERO(&cpuset);
-    CPU_SET(1, &cpuset);
-    if (sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0)
-        perror("sched_setaffinity CPU1 (continuing)");
-    if (setpriority(PRIO_PROCESS, 0, -20) != 0)
-        perror("setpriority -20 (continuing)");
+    /* The worker threads pin themselves: worker 0 to CPU0, worker 1 to CPU1. */
 
     /* The configure-only daemon leaves the sequencer disabled until this
      * point, exactly as before: the writer must be enabled and ready to
@@ -405,134 +596,65 @@ int main(int argc, char **argv)
     wr32(seq, REG_SEQ_CONTROL, 1u);
     printf("tx_shim: sequencer enabled; draining ring\n");
 
-    uint64_t stat_start = monotonic_ns();
-    uint64_t stat_pkts = 0;
-    uint64_t stat_batches = 0;
-    uint64_t stat_syscalls = 0;
-    uint64_t stat_short_batches = 0;
-    uint64_t stat_slot_bytes = 0;
-    uint64_t stat_sync_ns = 0;
-    uint64_t stat_spins = 0;
-    // Ring bytes from the last sync point that are already invalidated.
-    size_t   sync_cover = 0;
-    uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
-    uint64_t partial_since = 0;
+    /* Hand the ring to two sender cores. Each worker claims batches in order,
+     * invalidates its own range, and sends from its own socket. */
+    SendShared sh;
+    memset(&sh, 0, sizeof(sh));
+    pthread_mutex_init(&sh.lock, NULL);
+    sh.sock[0] = socks[0];
+    sh.sock[1] = socks[1];
+    sh.ring = ring;
+    sh.ctrl = ctrl;
+    sh.fw = fw;
+    sh.ring_slots = ring_slots;
+    sh.ring_mask = ring_mask;
+    sh.slot_stride = slot_stride;
+    sh.do_send = do_send;
+    sh.do_cache = do_cache;
+    sh.ring_bo = &ring_bo;
 
-    for (;;) {
-        produce = ctrl_load_acquire(&ctrl[0]) & ring_mask;
-        uint32_t available = (produce - consume) & ring_mask;
-        if (available == 0) {
-            stat_spins++;
-            continue;
-        }
-
-        uint64_t now = monotonic_ns();
-        if (available < MAX_GSO_SLOTS) {
-            if (partial_since == 0)
-                partial_since = now;
-            if (now - partial_since < SHORT_BATCH_DELAY_NS)
-                continue;
-        } else {
-            partial_since = 0;
-        }
-
-        uint32_t batch = available > MAX_GSO_SLOTS ? MAX_GSO_SLOTS : available;
-        uint32_t batch_start = consume;
-        uint32_t first = ring_slots - batch_start;
-        if (first > batch)
-            first = batch;
-        uint32_t second = batch - first;
-        uint32_t parts[2] = {first, second};
-        uint32_t sent_slots = 0;
-        int failed = 0;
-
-        for (unsigned part = 0; part < 2 && parts[part] != 0; part++) {
-            uint32_t part_slots = parts[part];
-            /* Use the original batch start plus the amount already sent.
-             * Do not add sent_slots to the already-advanced consume index:
-             * that skips the second half of a ring-wrap batch. */
-            uint32_t part_index = (batch_start + sent_slots) & ring_mask;
-            size_t byte_offset = (size_t)part_index * slot_stride;
-            uint8_t *slot_ptr = ring + byte_offset;
-            size_t part_bytes = (size_t)part_slots * slot_stride;
-
-            if (do_cache) {
-                // A wrap starts a fresh region: coverage from the end of the
-                // ring says nothing about the beginning.
-                if (byte_offset == 0)
-                    sync_cover = 0;
-                if (sync_cover < part_bytes) {
-                    size_t sync_len = part_bytes + SYNC_AHEAD_BYTES;
-                    if (byte_offset + sync_len > RING_BYTES)
-                        sync_len = RING_BYTES - byte_offset;
-                    uint64_t c0 = monotonic_ns();
-                    ring_bo.sync(XCL_BO_SYNC_BO_FROM_DEVICE, sync_len, byte_offset);
-                    stat_sync_ns += monotonic_ns() - c0;
-                    sync_cover = sync_len;
-                }
-                sync_cover -= part_bytes;
-            }
-
-            stat_syscalls += do_send ? 1u : 0u;
-            if (send_gso(sock, (const void *)slot_ptr, part_bytes, do_send) != 0) {
-                failed = 1;
-                break;
-            }
-
-            sent_slots += part_slots;
-            consume = (batch_start + sent_slots) & ring_mask;
-            ctrl_store_release(&ctrl[1], consume);
-            // Push the consume index to the writer over AXI-Lite. This is the
-            // value the writer uses for its full-ring drop decision.
-            wr32(fw, REG_PS_CONSUME, consume);
-            stat_pkts += part_slots;
-            stat_slot_bytes += (uint64_t)part_slots * slot_stride;
-        }
-
-        if (sent_slots == 0)
-            continue;
-
-        stat_batches++;
-        if (!failed && sent_slots < MAX_GSO_SLOTS)
-            stat_short_batches++;
-        if (failed) {
-            /* A successful first half of a wrap is already published. The
-             * next iteration retries only the unsent slots. */
-            partial_since = 0;
-            continue;
-        }
-        partial_since = 0;
-
-        now = monotonic_ns();
-        if (now - stat_start >= 1000000000ULL) {
-            uint32_t drops_now = rd32(fw, REG_DROP_COUNT);
-            uint32_t complete_now = rd32(fw, REG_COMPLETE_COUNT_LO);
-            double seconds = (double)(now - stat_start) / 1e9;
-            double pkts_s = (double)stat_pkts / seconds;
-            double batches_s = (double)stat_batches / seconds;
-            double syscalls_s = (double)stat_syscalls / seconds;
-            double sync_us = (double)stat_sync_ns / 1000.0;
-            printf("tx_shim: pkts/s=%.1f batches/s=%.1f syscalls/s=%.1f "
-                   "bo-sync-us=%.1f slot-bytes/s=%.0f "
-                   "drops=%u drops_delta=%u short-batches=%" PRIu64
-                   " produce=%u consume=%u complete=%u spins=%" PRIu64 "\n",
-                   pkts_s, batches_s, syscalls_s, sync_us,
-                   (double)stat_slot_bytes / seconds,
-                   drops_now, drops_now - drops_last, stat_short_batches,
-                   produce, consume, complete_now, stat_spins);
-            stat_start = now;
-            stat_pkts = 0;
-            stat_batches = 0;
-            stat_syscalls = 0;
-            stat_short_batches = 0;
-            stat_slot_bytes = 0;
-            stat_sync_ns = 0;
-            stat_spins = 0;
-            drops_last = drops_now;
+    WorkerArg wa[2];
+    pthread_t tid[2];
+    for (int i = 0; i < 2; i++) {
+        wa[i].sh = &sh;
+        wa[i].idx = i;
+        if (pthread_create(&tid[i], NULL, tx_worker, &wa[i]) != 0) {
+            perror("pthread_create");
+            return 1;
         }
     }
 
-    if (sock >= 0)
-        close(sock);
+    uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
+    uint64_t stat_start = monotonic_ns();
+    for (;;) {
+        sleep(1);
+        uint64_t now = monotonic_ns();
+        uint32_t drops_now = rd32(fw, REG_DROP_COUNT);
+        uint32_t complete_now = rd32(fw, REG_COMPLETE_COUNT_LO);
+        pthread_mutex_lock(&sh.lock);
+        uint64_t pkts = sh.stat_pkts;          sh.stat_pkts = 0;
+        uint64_t batches = sh.stat_batches;    sh.stat_batches = 0;
+        uint64_t sync_ns = sh.stat_sync_ns;    sh.stat_sync_ns = 0;
+        uint64_t send_ns = sh.stat_send_ns;    sh.stat_send_ns = 0;
+        uint64_t spins = sh.stat_spins;        sh.stat_spins = 0;
+        uint32_t frontier = (uint32_t)((sh.release_batch * MAX_GSO_SLOTS) & ring_mask);
+        uint32_t produce_now = ctrl_load_acquire(&ctrl[0]) & ring_mask;
+        pthread_mutex_unlock(&sh.lock);
+
+        double seconds = (double)(now - stat_start) / 1e9;
+        printf("tx_shim: pkts/s=%.1f batches/s=%.1f bo-sync-us=%.1f send-us=%.1f "
+               "slot-bytes/s=%.0f drops=%u drops_delta=%u threads=2 "
+               "produce=%u frontier=%u complete=%u spins=%" PRIu64 "\n",
+               (double)pkts / seconds,
+               (double)batches / seconds,
+               (double)sync_ns / 1000.0,
+               (double)send_ns / 1000.0,
+               (double)pkts * slot_stride / seconds,
+               drops_now, drops_now - drops_last,
+               produce_now, frontier, complete_now, spins);
+        stat_start = now;
+        drops_last = drops_now;
+    }
+
     return 0;
 }
