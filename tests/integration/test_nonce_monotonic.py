@@ -116,9 +116,10 @@ def test_nonce_validator_rx_window():
     assert validator.validate_and_track(3) is True
     assert validator.latest_nonce == 3
     
-    # Replayed nonce (non-monotonic, caught before replay window check)
+    # Replayed nonce: the entry is still tracked, so it is a replay reject.
     assert validator.validate_and_track(2) is False
-    assert validator.rejects_monotonic == 1
+    assert validator.rejects_replay == 1
+    assert validator.rejects_monotonic == 0
     
     # Future nonce
     assert validator.validate_and_track(100) is True
@@ -127,8 +128,9 @@ def test_nonce_validator_rx_window():
     # Old nonce outside window (also caught as non-monotonic first)
     # Note: when a nonce fails monotonic check (nonce <= latest), it's rejected as monotonic
     # The replay window check only applies to nonces that are greater than (latest - window)
+    # Old nonce outside the reorder window: rejected.
     assert validator.validate_and_track(100 - 1024) is False
-    assert validator.rejects_monotonic == 2  # incremented because -924 is not > 100
+    assert validator.rejects_monotonic == 1  # 1025 packets behind the high-water mark
     
     # Old nonce within window (barely)
     # Need a nonce that is:
@@ -138,9 +140,14 @@ def test_nonce_validator_rx_window():
     # That means it's a future nonce, which always passes replay window.
     # So the only way to trigger replay_window rejection is via a different validator instance:
     
-    # Reset for clean window test
-    validator2 = NonceValidator(replay_window_packets=10)
-    validator2.latest_nonce = 100
+    # Reorder tolerance: a packet below the high-water mark is accepted while it
+    # is inside the reorder window, and the mark must not move backwards.
+    validator2 = NonceValidator(replay_window_packets=1024)
+    assert validator2.validate_and_track(50) is True
+    assert validator2.validate_and_track(49) is True
+    assert validator2.validate_and_track(48) is True
+    assert validator2.reordered == 2
+    assert validator2.latest_nonce == 50
     
     # Nonce that is > latest but outside window: 100 - 10 - 1 = 89, but need > 100 to pass monotonic
     # Actually, the logic is: reject if (incoming_nonce + window) <= latest_nonce
@@ -158,10 +165,52 @@ def test_nonce_validator_rx_window():
           f"replay_rejects={validator.rejects_replay}")
 
 
+def test_nonce_validator_reorder_tolerance():
+    """Two sender threads put packets on the wire out of order."""
+
+    from pc.runtime.main_rx import NonceValidator
+
+    validator = NonceValidator(replay_window_packets=1024)
+    # Every packet must be accepted exactly once, whatever the arrival order.
+    arrival = [1, 2, 4, 3, 5, 8, 6, 7, 9, 10]
+    assert all(validator.validate_and_track(n) for n in arrival)
+    assert validator.reordered == 3        # 3, 6 and 7 arrived late
+    assert validator.rejects_monotonic == 0
+    assert validator.rejects_replay == 0
+    assert validator.latest_nonce == 10
+
+    # A second copy of a late packet is still a replay.
+    assert validator.validate_and_track(3) is False
+    assert validator.validate_and_track(7) is False
+    assert validator.rejects_replay == 2
+    assert validator.rejects_monotonic == 0
+
+    # Strictly monotonic mode (--strict-nonce) keeps the old behaviour.
+    strict = NonceValidator(replay_window_packets=1024, reorder_window_packets=0)
+    assert strict.validate_and_track(10) is True
+    assert strict.validate_and_track(9) is False
+    assert strict.rejects_monotonic == 1
+    assert strict.reordered == 0
+
+    # A packet that was pruned from the tracking set and is older than the
+    # reorder window is rejected, not accepted as new.
+    late = NonceValidator(replay_window_packets=4, reorder_window_packets=4)
+    for n in range(1, 11):
+        assert late.validate_and_track(n) is True
+    assert late.validate_and_track(9) is False   # still tracked -> replay
+    assert late.validate_and_track(5) is False   # pruned and too old
+    assert late.rejects_replay == 1
+    assert late.rejects_monotonic == 1
+
+    print(f"✓ RX nonce reorder tolerance test passed: "
+          f"reordered={validator.reordered}, rejects_replay={validator.rejects_replay}")
+
+
 if __name__ == "__main__":
     test_nonce_monotonic_strict()
     test_replay_window_acceptance()
     test_nonce_tracker_tx_monotonic()
     test_nonce_tracker_wrap()
     test_nonce_validator_rx_window()
+    test_nonce_validator_reorder_tolerance()
     print("\n✓ All nonce monotonicity tests passed")

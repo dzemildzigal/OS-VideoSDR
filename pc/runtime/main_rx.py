@@ -63,40 +63,57 @@ def strip_transport_padding(datagram: bytes) -> bytes:
 
 
 class NonceValidator:
-    """Tracks and validates nonce monotonicity and replay window."""
-    
-    def __init__(self, replay_window_packets: int = 1024):
+    """Tracks nonces and rejects replays for the receive stream.
+
+    Two sender threads put packets on the wire at the same time, so packets
+    arrive slightly out of order (measured: about 0.5% of packets). A nonce
+    below the highest one seen is therefore accepted while it is still inside
+    the reorder window and has not been seen before. Duplicates, and packets
+    older than the window, are rejected. Use reorder_window_packets=0 for a
+    strictly monotonic single-sender stream.
+    """
+
+    def __init__(self, replay_window_packets: int = 1024, reorder_window_packets: int = None):
         self.latest_nonce: int = 0
         self.replay_window = replay_window_packets
+        self.reorder_window = (
+            replay_window_packets if reorder_window_packets is None else reorder_window_packets
+        )
         self.seen_nonces: Dict[int, bool] = {}
         self.rejects_monotonic = 0
         self.rejects_replay = 0
-    
+        self.reordered = 0
+
     def validate_and_track(self, nonce_counter: int) -> bool:
-        """Check if nonce is valid (monotonic + within replay window).
-        
+        """Check if nonce is valid (no duplicate, inside the tracking window).
+
         Returns:
             True if nonce is valid, False if rejected.
         """
-        # Check monotonicity
-        if not validate_nonce_monotonic(self.latest_nonce, nonce_counter):
-            self.rejects_monotonic += 1
-            return False
-        
-        # Check replay window
-        if not validate_replay_window(self.latest_nonce, nonce_counter, self.replay_window):
+        # Replay of a packet whose entry is still tracked.
+        if nonce_counter in self.seen_nonces:
             self.rejects_replay += 1
             return False
-        
-        # Track in window
+
+        if nonce_counter > self.latest_nonce:
+            pass
+        elif (nonce_counter + self.reorder_window) > self.latest_nonce:
+            # Late arrival from the other sender thread. Legal, but it must not
+            # move the high-water mark backwards.
+            self.reordered += 1
+        else:
+            self.rejects_monotonic += 1
+            return False
+
         self.seen_nonces[nonce_counter] = True
-        self.latest_nonce = nonce_counter
-        
+        if nonce_counter > self.latest_nonce:
+            self.latest_nonce = nonce_counter
+
         # Prune old entries beyond window
         if len(self.seen_nonces) > self.replay_window:
             cutoff = self.latest_nonce - self.replay_window
             self.seen_nonces = {k: v for k, v in self.seen_nonces.items() if k > cutoff}
-        
+
         return True
 
 
@@ -114,7 +131,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--display-mode", choices=["opencv", "headless"], default="opencv",
                        help="Display mode: opencv (live) or headless (no output)")
     parser.add_argument("--strict-nonce", action="store_true",
-                       help="Reject any nonce validation failures (default: warn)")
+                       help="Require strictly increasing nonces (single sender); "
+                            "default accepts out-of-order arrivals inside the "
+                            "replay window")
     return parser.parse_args()
 
 
@@ -152,7 +171,11 @@ def main() -> None:
     crypto = AesGcmSoftware(key)
     reasm = FrameReassembler()
     display = FrameDisplay(display_mode=args.display_mode, width=1280, height=720)
-    nonce_validator = NonceValidator(replay_window_packets=config.crypto.replay_window_packets)
+    # strict-nonce keeps the old strictly monotonic behaviour (single sender).
+    nonce_validator = NonceValidator(
+        replay_window_packets=config.crypto.replay_window_packets,
+        reorder_window_packets=0 if args.strict_nonce else None,
+    )
     
     print(f"RX config: crypto=aesgcm display={args.display_mode} max_frames={args.max_frames}")
     print(f"Network: bind_ip={config.network.bind_ip}:{config.network.rx_port}")
@@ -273,6 +296,9 @@ def main() -> None:
         if nonce_validator.rejects_monotonic > 0 or nonce_validator.rejects_replay > 0:
             print(f"Nonce validation: {nonce_validator.rejects_monotonic} monotonic, "
                   f"{nonce_validator.rejects_replay} replay")
+        if nonce_validator.reordered > 0:
+            print(f"Nonce reordering: {nonce_validator.reordered} packets arrived out of "
+                  f"order and were accepted inside the window")
 
 
 if __name__ == "__main__":
