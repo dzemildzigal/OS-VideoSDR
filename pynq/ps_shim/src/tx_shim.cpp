@@ -116,6 +116,7 @@ typedef struct {
     int pin;        // 1 = pin each worker to its own core, 0 = let the scheduler decide
     int backoff_us; // 0 = pure spin while waiting for a full batch, >0 = nanosleep
     int sndbuf;     // UDP send buffer to request per socket
+    int nice_level; // scheduling niceness of the sender threads
     int ring_devmem; // 1 = read the ring through /dev/mem (uncached) instead of the BO
     int axcache;    // -1 = leave the writer's reset default, else AXCACHE value
     int axuser;     // -1 = leave the writer's reset default, else AXUSER value
@@ -198,6 +199,12 @@ static int parse_options(int argc, char **argv, Options *out)
     // lets the senders run far ahead of the release frontier and the writer then
     // cannot reuse slots (measured), so keep it modest and tunable.
     out->sndbuf = 1 * 1024 * 1024;
+    // Send below default priority. The workers need 90% of both cores, and at
+    // nice 0 that starves sshd: an incoming SSH handshake needs several round
+    // trips and the board became unreachable three times that way, each time
+    // costing a power cycle. A slightly lower priority costs a fraction of a
+    // percent of throughput and keeps the board manageable.
+    out->nice_level = 5;
     out->ring_devmem = 0;
     out->axcache = -1;
     out->axuser = -1;
@@ -280,6 +287,14 @@ static int parse_options(int argc, char **argv, Options *out)
         }
         if (strcmp(arg, "--ring-devm") == 0) {
             out->ring_devmem = 1;
+            continue;
+        }
+        if (strcmp(arg, "--nice") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--nice requires a value\n");
+                return -1;
+            }
+            out->nice_level = (int)strtol(argv[i], NULL, 10);
             continue;
         }
         if (strcmp(arg, "--axcache") == 0) {
@@ -461,6 +476,7 @@ typedef struct {
     int              do_cache;
     int              pin;
     int              backoff_us;
+    int              nice_level;
     xrt::bo         *ring_bo;
     uint64_t         claim_batch;    // next batch index to claim
     uint64_t         release_batch;  // first batch not yet complete
@@ -489,8 +505,11 @@ static void *tx_worker(void *arg)
     if (sh->pin && pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) != 0)
         perror("pthread_setaffinity (continuing)");
     // Default scheduling priority on purpose: with two senders both cores are
-    // busy, and a negative nice value starves sshd and systemd (the board became
-    // unreachable once).
+    // busy. See --nice: a level above zero keeps sshd responsive so the board
+    // cannot lock itself out.
+    if (sh->nice_level != 0 &&
+        setpriority(PRIO_PROCESS, 0, sh->nice_level) != 0)
+        perror("setpriority (continuing)");
 
     for (;;) {
         uint64_t batch_index;
@@ -770,6 +789,7 @@ int main(int argc, char **argv)
     sh.do_cache = do_cache;
     sh.pin = opt.pin;
     sh.backoff_us = opt.backoff_us;
+    sh.nice_level = opt.nice_level;
     sh.fw = fw;
     sh.ring_bo = &ring_bo;
 
@@ -783,8 +803,8 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    printf("tx_shim: %d sender thread(s), pin=%d, backoff=%d us, sndbuf=%d\n",
-           n_workers, opt.pin, opt.backoff_us, opt.sndbuf);
+    printf("tx_shim: %d sender thread(s), pin=%d, backoff=%d us, sndbuf=%d, nice=%d\n",
+           n_workers, opt.pin, opt.backoff_us, opt.sndbuf, opt.nice_level);
 
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
     uint64_t stat_start = monotonic_ns();

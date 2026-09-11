@@ -126,6 +126,38 @@ def run(args: argparse.Namespace) -> None:
     Overlay = pynq.Overlay
 
     bit_path = Path(args.bitstream).expanduser().resolve()
+
+    # Cross-check the software payload size against the hardware geometry before
+    # touching the PL. The authenticated body is 8 (nonce prefix) + 40 (header)
+    # + payload + 16 (tag), and the ring writer writes exactly that many bytes
+    # per slot. If --payload-bytes disagrees, the packetizer emits a wrong
+    # header length and, worse, the AES core computes its GHASH length from it,
+    # so every packet fails authentication while the ciphertext still looks
+    # perfect. That cost two hours of debugging once; it must not happen twice.
+    hwh_path = bit_path.with_suffix(".hwh")
+    if hwh_path.exists():
+        import re
+
+        handoff = hwh_path.read_text(errors="ignore")
+        found = re.findall(r'PACKET_BYTES"?\s+VALUE="(\d+)"', handoff)
+        if found:
+            hw_body = int(found[0])
+            sw_body = args.payload_bytes + 64
+            if sw_body != hw_body:
+                raise SystemExit(
+                    f"[tx_daemon] payload mismatch: --payload-bytes {args.payload_bytes} "
+                    f"implies an authenticated body of {sw_body} bytes, but {hwh_path.name} "
+                    f"was built for {hw_body}. Set --payload-bytes {hw_body - 64} "
+                    f"(or use the matching bitstream)."
+                )
+            print(
+                f"[tx_daemon] geometry check: payload {args.payload_bytes} + 64 = "
+                f"{sw_body} bytes matches the handoff"
+            )
+        else:
+            print(f"[tx_daemon] WARNING: {hwh_path.name} has no PACKET_BYTES to check")
+    else:
+        print(f"[tx_daemon] WARNING: no handoff next to {bit_path.name}; skipping geometry check")
     if not bit_path.exists():
         raise FileNotFoundError(f"Bitstream not found: {bit_path}")
     if not args.configure_only:
