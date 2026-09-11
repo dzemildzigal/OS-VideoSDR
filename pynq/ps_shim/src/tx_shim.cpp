@@ -74,6 +74,10 @@
 #define REG_CTRL_BASE_HI        0x0018u
 #define REG_RING_LOG2           0x001Cu
 #define REG_SLOT_STRIDE         0x0020u
+// The writer mirrors its produce slot index here as well as into the control
+// block in DDR. Reading it over AXI-Lite is uncached, so it can never be a
+// stale copy the way a cached read of the DDR mirror can.
+#define REG_PRODUCE_SLOT        0x0024u
 #define REG_DROP_COUNT          0x002Cu
 #define REG_COMPLETE_COUNT_LO   0x0030u
 // Read-only: 1 when the writer reaches DDR through the PS ACP, so its writes
@@ -102,6 +106,12 @@ typedef struct {
     const char *dst_ip;
     uint16_t dst_port;
     const char *mode;
+    int workers;    // 1 or 2 sender threads/sockets
+    int sync;       // -1 = follow the hardware coherent flag, 1 = force, 0 = off
+    int pin;        // 1 = pin each worker to its own core, 0 = let the scheduler decide
+    int backoff_us; // 0 = pure spin while waiting for a full batch, >0 = nanosleep
+    int sndbuf;     // UDP send buffer to request per socket
+    int ring_devmem; // 1 = read the ring through /dev/mem (uncached) instead of the BO
 } Options;
 
     // Batch the cache maintenance. One sync per 40,960-byte batch costs
@@ -157,7 +167,8 @@ static void usage(const char *prog)
 {
     fprintf(stderr,
             "usage: %s [dst-ip] [dst-port] [send|nosend|nocopy]\n"
-            "       %s --dst-host IP --dst-port PORT [--mode MODE]\n",
+            "       %s --dst-host IP --dst-port PORT [--mode MODE]\n"
+            "            [--workers 1|2] [--sync|--no-sync]\n",
             prog, prog);
 }
 
@@ -167,6 +178,20 @@ static int parse_options(int argc, char **argv, Options *out)
     out->dst_ip = "192.168.0.37";
     out->dst_port = 5600;
     out->mode = "send";
+    out->workers = 2;
+    out->sync = -1;
+    // Pinning looks tidy but it backfires here: eth0 raises all of its
+    // interrupts on core 0, so a worker pinned there competes with the receive
+    // softirq while core 1 idles (measured: 100% busy / 67% busy when pinned).
+    out->pin = 0;
+    // 0 measured better than any sleep: the two workers must stay in step or the
+    // release frontier stalls and the writer cannot reuse slots.
+    out->backoff_us = 0;
+    // The socket buffer paces the workers against the network. A very large one
+    // lets the senders run far ahead of the release frontier and the writer then
+    // cannot reuse slots (measured), so keep it modest and tunable.
+    out->sndbuf = 1 * 1024 * 1024;
+    out->ring_devmem = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -202,6 +227,54 @@ static int parse_options(int argc, char **argv, Options *out)
                 return -1;
             }
             out->mode = argv[i];
+            continue;
+        }
+        if (strcmp(arg, "--workers") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--workers requires a value\n");
+                return -1;
+            }
+            out->workers = (int)strtol(argv[i], NULL, 10);
+            if (out->workers < 1 || out->workers > 2) {
+                fprintf(stderr, "--workers must be 1 or 2\n");
+                return -1;
+            }
+            continue;
+        }
+        if (strcmp(arg, "--sync") == 0) {
+            out->sync = 1;
+            continue;
+        }
+        if (strcmp(arg, "--no-sync") == 0) {
+            out->sync = 0;
+            continue;
+        }
+        if (strcmp(arg, "--pin") == 0) {
+            out->pin = 1;
+            continue;
+        }
+        if (strcmp(arg, "--backoff-us") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--backoff-us requires a value\n");
+                return -1;
+            }
+            out->backoff_us = (int)strtol(argv[i], NULL, 10);
+            continue;
+        }
+        if (strcmp(arg, "--sndbuf") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--sndbuf requires a value\n");
+                return -1;
+            }
+            out->sndbuf = (int)strtol(argv[i], NULL, 10);
+            continue;
+        }
+        if (strcmp(arg, "--ring-devm") == 0) {
+            out->ring_devmem = 1;
+            continue;
+        }
+        if (strcmp(arg, "--no-pin") == 0) {
+            out->pin = 0;
             continue;
         }
         if (arg[0] == '-') {
@@ -270,6 +343,31 @@ static int send_gso(int sock, const void *data, size_t bytes, int do_send)
     return 0;
 }
 
+// The kernel clamps SO_SNDBUF to net.core.wmem_max, which this image sets to
+// 176 KB - about 1.8 ms of this stream. Every short network hiccup then blocks
+// send() and the 29 ms ring overflows in a burst. Raise the limit so the
+// requested 8 MB buffer is real.
+static void raise_send_buffer_limit(int want)
+{
+    const char *path = "/proc/sys/net/core/wmem_max";
+    int need = want + (want / 2);   // the kernel doubles what we ask for
+    int fd = open(path, O_RDWR);
+    if (fd < 0) {
+        perror("open /proc/sys/net/core/wmem_max (run as root)");
+        return;
+    }
+    char cur[32] = {0};
+    if (read(fd, cur, sizeof(cur) - 1) > 0 && atoi(cur) >= need) {
+        close(fd);
+        return;
+    }
+    char want_buf[32];
+    int n = snprintf(want_buf, sizeof(want_buf), "%d", need);
+    if (write(fd, want_buf, (size_t)n) < 0)
+        perror("write wmem_max");
+    close(fd);
+}
+
 static int make_tx_socket(const Options &opt, uint32_t slot_stride)
 {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -277,9 +375,13 @@ static int make_tx_socket(const Options &opt, uint32_t slot_stride)
         perror("socket");
         return -1;
     }
-    int sndbuf = 4 * 1024 * 1024;
+    int sndbuf = opt.sndbuf;
     if (setsockopt(sock, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
         perror("setsockopt(SO_SNDBUF)");
+    socklen_t slen = sizeof(sndbuf);
+    int eff = 0;
+    if (getsockopt(sock, SOL_SOCKET, SO_SNDBUF, &eff, &slen) == 0)
+        printf("tx_shim: socket send buffer = %d bytes\n", eff);
 
     int segment_size = (int)slot_stride;
     if (setsockopt(sock, IPPROTO_UDP, UDP_SEGMENT,
@@ -332,6 +434,8 @@ typedef struct {
     uint32_t         slot_stride;
     int              do_send;
     int              do_cache;
+    int              pin;
+    int              backoff_us;
     xrt::bo         *ring_bo;
     uint64_t         claim_batch;    // next batch index to claim
     uint64_t         release_batch;  // first batch not yet complete
@@ -357,7 +461,7 @@ static void *tx_worker(void *arg)
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(idx, &cpuset);
-    if (pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) != 0)
+    if (sh->pin && pthread_setaffinity_np(pthread_self(), sizeof(cpuset), &cpuset) != 0)
         perror("pthread_setaffinity (continuing)");
     // Default scheduling priority on purpose: with two senders both cores are
     // busy, and a negative nice value starves sshd and systemd (the board became
@@ -366,18 +470,31 @@ static void *tx_worker(void *arg)
     for (;;) {
         uint64_t batch_index;
         uint32_t batch_start;
+        unsigned idle_spins = 0;
 
         // Claim the next batch in order, only if the writer has published it.
         pthread_mutex_lock(&sh->lock);
-        uint32_t produce = ctrl_load_acquire(&sh->ctrl[0]) & sh->ring_mask;
+        uint32_t produce = rd32(sh->fw, REG_PRODUCE_SLOT) & sh->ring_mask;
         batch_index = sh->claim_batch;
         batch_start = (uint32_t)((batch_index * MAX_GSO_SLOTS) & sh->ring_mask);
         uint32_t available = (produce - batch_start) & sh->ring_mask;
         if (available < MAX_GSO_SLOTS) {
             sh->stat_spins++;
             pthread_mutex_unlock(&sh->lock);
+            // Busy waiting here burns a whole core and starves the other
+            // worker (measured: 0.7 s of spinning per second, which cost more
+            // throughput than the wait itself). One batch fills in about
+            // 0.45 ms, so a brief back-off costs nothing.
+            if (sh->backoff_us > 0 && ++idle_spins >= 64) {
+                struct timespec ts;
+                ts.tv_sec = 0;
+                ts.tv_nsec = (long)sh->backoff_us * 1000L;
+                nanosleep(&ts, NULL);
+                idle_spins = 0;
+            }
             continue;
         }
+        idle_spins = 0;
         sh->claim_batch++;
         pthread_mutex_unlock(&sh->lock);
 
@@ -474,20 +591,8 @@ int main(int argc, char **argv)
     int guard_fd = single_instance_guard();
     if (guard_fd < 0)
         return 1;
-    int force_sync = -1;   // -1 = follow the hardware flag, 1 = force, 0 = off
-    int n_workers = 2;     // how many sender threads spread the ring between them
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--sync") == 0)
-            force_sync = 1;
-        else if (strcmp(argv[i], "--no-sync") == 0)
-            force_sync = 0;
-        else if (strcmp(argv[i], "--workers") == 0 && i + 1 < argc)
-            n_workers = atoi(argv[++i]);
-    }
-    if (n_workers < 1 || n_workers > 2) {
-        fprintf(stderr, "tx_shim: --workers must be 1 or 2\n");
-        return 2;
-    }
+    int force_sync = opt.sync;
+    int n_workers = opt.workers;
     if (!do_send || !do_cache)
         printf("tx_shim: MEASURE MODE '%s' - network/cache operation disabled as selected\n",
                opt.mode);
@@ -548,6 +653,18 @@ int main(int argc, char **argv)
         fprintf(stderr, "tx_shim: XRT buffer map() returned NULL\n");
         return 1;
     }
+    if (opt.ring_devmem) {
+        /* Diagnostic path: read the slots over a strongly ordered /dev/mem
+         * mapping instead of the cacheable BO. If a corrupted packet still
+         * appears here, the fault is not CPU cache staleness. */
+        volatile uint8_t *alt = map_devmem(ring_bo.address(), RING_BYTES);
+        if (alt == MAP_FAILED) {
+            fprintf(stderr, "tx_shim: --ring-devm mapping failed\n");
+            return 1;
+        }
+        ring = (uint8_t *)alt;
+        printf("tx_shim: reading slots through /dev/mem (uncached) for diagnosis\n");
+    }
     memset(ctrl, 0, CONTROL_PAGE_BYTES);
     ctrl_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
@@ -575,7 +692,7 @@ int main(int argc, char **argv)
 
     uint32_t ring_mask = ring_slots - 1u;
     uint32_t consume = ctrl_load_acquire(&ctrl[1]) & ring_mask;
-    uint32_t produce = ctrl_load_acquire(&ctrl[0]) & ring_mask;
+    uint32_t produce = rd32(fw, REG_PRODUCE_SLOT) & ring_mask;
     uint32_t writer_status = rd32(fw, REG_WRITER_STATUS);
     printf("tx_shim: ring @ 0x%" PRIX64 " (%u slots x %u = %zu bytes) [xrt::bo cacheable]\n",
            ring_base, ring_slots, slot_stride, RING_BYTES);
@@ -586,6 +703,7 @@ int main(int argc, char **argv)
 
     int socks[2] = {-1, -1};
     if (do_send) {
+        raise_send_buffer_limit(opt.sndbuf);
         for (int i = 0; i < n_workers; i++) {
             socks[i] = make_tx_socket(opt, slot_stride);
             if (socks[i] < 0)
@@ -618,6 +736,9 @@ int main(int argc, char **argv)
     sh.slot_stride = slot_stride;
     sh.do_send = do_send;
     sh.do_cache = do_cache;
+    sh.pin = opt.pin;
+    sh.backoff_us = opt.backoff_us;
+    sh.fw = fw;
     sh.ring_bo = &ring_bo;
 
     WorkerArg wa[2];
@@ -630,7 +751,8 @@ int main(int argc, char **argv)
             return 1;
         }
     }
-    printf("tx_shim: %d sender thread(s)\n", n_workers);
+    printf("tx_shim: %d sender thread(s), pin=%d, backoff=%d us, sndbuf=%d\n",
+           n_workers, opt.pin, opt.backoff_us, opt.sndbuf);
 
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
     uint64_t stat_start = monotonic_ns();
@@ -646,7 +768,7 @@ int main(int argc, char **argv)
         uint64_t send_ns = sh.stat_send_ns;    sh.stat_send_ns = 0;
         uint64_t spins = sh.stat_spins;        sh.stat_spins = 0;
         uint32_t frontier = (uint32_t)((sh.release_batch * MAX_GSO_SLOTS) & ring_mask);
-        uint32_t produce_now = ctrl_load_acquire(&ctrl[0]) & ring_mask;
+        uint32_t produce_now = rd32(fw, REG_PRODUCE_SLOT) & ring_mask;
         pthread_mutex_unlock(&sh.lock);
 
         double seconds = (double)(now - stat_start) / 1e9;
