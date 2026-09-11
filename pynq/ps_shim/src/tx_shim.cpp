@@ -475,11 +475,18 @@ int main(int argc, char **argv)
     if (guard_fd < 0)
         return 1;
     int force_sync = -1;   // -1 = follow the hardware flag, 1 = force, 0 = off
+    int n_workers = 2;     // how many sender threads spread the ring between them
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--sync") == 0)
             force_sync = 1;
         else if (strcmp(argv[i], "--no-sync") == 0)
             force_sync = 0;
+        else if (strcmp(argv[i], "--workers") == 0 && i + 1 < argc)
+            n_workers = atoi(argv[++i]);
+    }
+    if (n_workers < 1 || n_workers > 2) {
+        fprintf(stderr, "tx_shim: --workers must be 1 or 2\n");
+        return 2;
     }
     if (!do_send || !do_cache)
         printf("tx_shim: MEASURE MODE '%s' - network/cache operation disabled as selected\n",
@@ -579,7 +586,7 @@ int main(int argc, char **argv)
 
     int socks[2] = {-1, -1};
     if (do_send) {
-        for (int i = 0; i < 2; i++) {
+        for (int i = 0; i < n_workers; i++) {
             socks[i] = make_tx_socket(opt, slot_stride);
             if (socks[i] < 0)
                 return 1;
@@ -615,7 +622,7 @@ int main(int argc, char **argv)
 
     WorkerArg wa[2];
     pthread_t tid[2];
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < n_workers; i++) {
         wa[i].sh = &sh;
         wa[i].idx = i;
         if (pthread_create(&tid[i], NULL, tx_worker, &wa[i]) != 0) {
@@ -623,6 +630,7 @@ int main(int argc, char **argv)
             return 1;
         }
     }
+    printf("tx_shim: %d sender thread(s)\n", n_workers);
 
     uint32_t drops_last = rd32(fw, REG_DROP_COUNT);
     uint64_t stat_start = monotonic_ns();
@@ -643,7 +651,7 @@ int main(int argc, char **argv)
 
         double seconds = (double)(now - stat_start) / 1e9;
         printf("tx_shim: pkts/s=%.1f batches/s=%.1f bo-sync-us=%.1f send-us=%.1f "
-               "slot-bytes/s=%.0f drops=%u drops_delta=%u threads=2 "
+               "slot-bytes/s=%.0f drops=%u drops_delta=%u threads=%d "
                "produce=%u frontier=%u complete=%u spins=%" PRIu64 "\n",
                (double)pkts / seconds,
                (double)batches / seconds,
@@ -651,6 +659,7 @@ int main(int argc, char **argv)
                (double)send_ns / 1000.0,
                (double)pkts * slot_stride / seconds,
                drops_now, drops_now - drops_last,
+               n_workers,
                produce_now, frontier, complete_now, spins);
         stat_start = now;
         drops_last = drops_now;
