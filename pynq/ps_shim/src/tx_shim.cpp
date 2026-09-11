@@ -83,6 +83,11 @@
 // Read-only: 1 when the writer reaches DDR through the PS ACP, so its writes
 // snoop the CPU caches and no invalidate is needed before reading slots.
 #define REG_COHERENT            0x004Cu
+// Cache attributes the writer drives on its AXI master: bits [3:0] AXCACHE,
+// bits [12:8] AXUSER. Reset default is 4'b1111 / 5'b11111. Writing this over
+// AXI-Lite changes the attributes of the following transactions, so the
+// coherence setting can be swept while the stream runs.
+#define REG_AX_ATTR             0x0050u
 // PS-pushed consume index. The writer takes its full-ring drop decision from
 // this register instead of reading the control page over its AXI master port,
 // because that read returns the writer's own produce word on this hardware
@@ -112,6 +117,8 @@ typedef struct {
     int backoff_us; // 0 = pure spin while waiting for a full batch, >0 = nanosleep
     int sndbuf;     // UDP send buffer to request per socket
     int ring_devmem; // 1 = read the ring through /dev/mem (uncached) instead of the BO
+    int axcache;    // -1 = leave the writer's reset default, else AXCACHE value
+    int axuser;     // -1 = leave the writer's reset default, else AXUSER value
 } Options;
 
     // Batch the cache maintenance. One sync per 40,960-byte batch costs
@@ -192,6 +199,8 @@ static int parse_options(int argc, char **argv, Options *out)
     // cannot reuse slots (measured), so keep it modest and tunable.
     out->sndbuf = 1 * 1024 * 1024;
     out->ring_devmem = 0;
+    out->axcache = -1;
+    out->axuser = -1;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -271,6 +280,22 @@ static int parse_options(int argc, char **argv, Options *out)
         }
         if (strcmp(arg, "--ring-devm") == 0) {
             out->ring_devmem = 1;
+            continue;
+        }
+        if (strcmp(arg, "--axcache") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--axcache requires a value\n");
+                return -1;
+            }
+            out->axcache = (int)strtol(argv[i], NULL, 0);
+            continue;
+        }
+        if (strcmp(arg, "--axuser") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "--axuser requires a value\n");
+                return -1;
+            }
+            out->axuser = (int)strtol(argv[i], NULL, 0);
             continue;
         }
         if (strcmp(arg, "--no-pin") == 0) {
@@ -688,6 +713,13 @@ int main(int argc, char **argv)
     // so a previous session's value can leave it in a permanent drop state
     // (produce+1 == stale consume). Initialize it to 0 before enabling.
     wr32(fw, REG_PS_CONSUME, 0u);
+    if (opt.axcache >= 0 || opt.axuser >= 0) {
+        uint32_t cache = (opt.axcache >= 0) ? (uint32_t)(opt.axcache & 0xF) : 0xFu;
+        uint32_t user = (opt.axuser >= 0) ? (uint32_t)(opt.axuser & 0x1F) : 0x1Fu;
+        wr32(fw, REG_AX_ATTR, (user << 8) | cache);
+        printf("tx_shim: AXI cache attributes set to AXCACHE=0x%X AXUSER=0x%X\n",
+               cache, user);
+    }
     wr32(fw, REG_WRITER_CONTROL, 1u);
 
     uint32_t ring_mask = ring_slots - 1u;
