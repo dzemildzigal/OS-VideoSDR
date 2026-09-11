@@ -118,7 +118,60 @@ slot with 1368 payload bytes (456 pixels) lowers the requirement to
 6. Full chain: the PC receiver completes 30 frames per second at
    1280x720 RGB888.
 
-## 5. Open risks
+## 5. Measured result (2026-09-11, bit e94b9d68)
+
+Target: 70,560 packets/s. All rates measured on the wire and re-checked on the
+PC.
+
+| configuration                  | rate        | drops  | auth failures  |
+|--------------------------------|-------------|--------|----------------|
+| ACP, cached ring read          | 70,505-70,659 | 0    | 155-250 per 20 s |
+| ACP, uncached ring read        | 61,176-62,204 | 8,500/s | **0 in 1,227,974** |
+| HP0, cached + invalidate       | 54,500      | some   | 0              |
+
+Cache maintenance is gone as expected (`bo-sync-us=0`), and with the cached read
+the chain reaches the target with no drops at all. 451 frames completed in
+20 s in the best run.
+
+### 5.1 The remaining defect
+
+The cached run loses 0.011% of packets to failed authentication. Measurements
+show that the failures are:
+
+- always isolated packets, never two in a row (250 failures, 0 adjacent pairs);
+- absent when the same slots are read through an uncached mapping
+  (0 failures in 1,227,974 packets).
+
+So the PL's writes through the ACP are **not** invalidating the CPU's cached
+copies, even though UG585's condition is satisfied (AWUSER[0]=1, AWCACHE[1]=1,
+and the PS7 ties the ACP's AWUSER to 31). The ring is 29 ms deep and the CPU
+reads 90 MB/s, so nearly every stale line is evicted before it is read again -
+which is why only 0.011% of packets are affected.
+
+### 5.2 What this costs
+
+- Cached read: correct rate, 0.011% corrupt packets. A corrupted packet breaks
+  its whole frame, so about one frame in three loses a packet.
+- Uncached read: no corrupt packets at all, but the uncached read costs about
+  5 us per packet, so the sender saturates both cores at 62k packets/s and the
+  ring overflows (8,500 drops/s).
+
+### 5.3 Next step
+
+Rebuild with `AWCACHE = 4'b1111` and `AWUSER = 5'b11111` (write-allocate plus
+all user bits). This is the setting that Xilinx users report as working, and a
+write-allocate write reaches the CPU's own copy, so the read must be correct.
+If that fails, fall back to the uncached read plus the 1440-byte slot, which
+lowers the requirement to 60,660 packets/s and fits under the measured 62k.
+
+### 5.4 Note for the test harness
+
+The writer latches `FAULT_TKEEP` (fault code 2) and stops publishing when it is
+disabled while the video keeps running - as happens when the shim is restarted
+several times in a row. Only a full reload of the overlay clears it. Restart the
+shim once per measurement, not in a loop.
+
+## 6. Open risks
 
 | risk                              | state                                            |
 |-----------------------------------|--------------------------------------------------|
