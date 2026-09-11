@@ -7,8 +7,7 @@ from protocol.constants import AUTHENTICATED_BODY_BYTES, TRANSPORT_SLOT_BYTES
 
 
 def test_b3_padding_is_removed_after_validation() -> None:
-    body = bytes(range(256)) * 4 + bytes(range(216))
-    body = body[:AUTHENTICATED_BODY_BYTES]
+    body = bytes(i % 256 for i in range(AUTHENTICATED_BODY_BYTES))
     slot = body + bytes(TRANSPORT_SLOT_BYTES - AUTHENTICATED_BODY_BYTES)
 
     assert len(body) == AUTHENTICATED_BODY_BYTES

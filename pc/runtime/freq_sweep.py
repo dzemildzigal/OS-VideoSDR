@@ -18,8 +18,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
-AUTHENTICATED_BODY_BYTES = 1240
-TRANSPORT_SLOT_BYTES = 1280
+AUTHENTICATED_BODY_BYTES = 1384
+TRANSPORT_SLOT_BYTES = 1408
 BOARD = "xilinx@192.168.0.123"
 FREQS = [50, 75, 100]
 MINUTES_PER_FREQ = 25.0
@@ -30,7 +30,7 @@ DAEMON_CMD = (
     "python3 tx_daemon.py --bitstream /home/xilinx/hdmi_aes_tx.bit "
     "--dst-host 192.168.0.37 --dst-port 5600 "
     "--key-hex 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f "
-    "--payload-bytes 1176 --configure-only --aes-freq {freq} "
+    "--payload-bytes 1320 --configure-only --aes-freq {freq} "
     "</dev/null >/home/xilinx/tx_daemon.log 2>&1 &'"
 )
 SHIM_CMD = (
@@ -114,7 +114,7 @@ def monitor_leg(minutes, label, H):
             continue
         if len(d) != TRANSPORT_SLOT_BYTES or any(d[AUTHENTICATED_BODY_BYTES:]):
             bad += 1
-            print("FAIL %s invalid 1280-byte slot/padding" % label, flush=True)
+            print("FAIL %s invalid 1408-byte slot/padding" % label, flush=True)
             continue
         body = d[:AUTHENTICATED_BODY_BYTES]
         p = int.from_bytes(body[:8], "big")

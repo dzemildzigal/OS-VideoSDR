@@ -17,9 +17,11 @@ DEFAULT_TAG_LENGTH = 16
 MAX_PAYLOAD_BYTES = 1200
 
 # B.2/B.3 PL transport contract. The GCM tag covers only the authenticated
-# body. The final 40 bytes exist only to make each UDP GSO segment 1280 bytes.
-AUTHENTICATED_BODY_BYTES = 1240
-TRANSPORT_SLOT_BYTES = 1280
+# body. The trailing bytes exist only to make each UDP GSO segment 1408 bytes:
+# 11 x 128-byte AXI bursts in the ring writer, and 64 bytes under the
+# 1500-byte MTU so no VLAN tag can force fragments.
+AUTHENTICATED_BODY_BYTES = 1384
+TRANSPORT_SLOT_BYTES = 1408
 TRANSPORT_PADDING_BYTES = TRANSPORT_SLOT_BYTES - AUTHENTICATED_BODY_BYTES
 
 PAYLOAD_TYPE_RAW_RGB = 1

@@ -99,8 +99,8 @@
 
 #define RING_LOG2_DEFAULT       11u
 #define RING_SLOTS_DEFAULT      (1u << RING_LOG2_DEFAULT)
-#define SLOT_STRIDE_DEFAULT     1280u
-#define AUTHENTICATED_BYTES     1240u
+#define SLOT_STRIDE_DEFAULT     1408u
+#define AUTHENTICATED_BYTES     1384u
 #define CONTROL_PAGE_BYTES      4096u
 #define MAX_GSO_SLOTS           32u
 #define SHORT_BATCH_DELAY_NS    2000000ULL
@@ -411,7 +411,7 @@ static int make_tx_socket(const Options &opt, uint32_t slot_stride)
     int segment_size = (int)slot_stride;
     if (setsockopt(sock, IPPROTO_UDP, UDP_SEGMENT,
                    &segment_size, sizeof(segment_size)) < 0) {
-        perror("setsockopt(UDP_SEGMENT=1280)");
+        perror("setsockopt(UDP_SEGMENT=1408)");
         close(sock);
         return -1;
     }
