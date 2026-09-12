@@ -626,7 +626,16 @@ static void *tx_worker(void *arg)
             if (((frontier - produce_now) & sh->ring_mask) < (sh->ring_slots / 2u))
                 frontier = produce_now;
         }
-        ctrl_store_release(&sh->ctrl[1], frontier);
+        /* Push the consume index ONLY to the writer's register 0x48.
+         *
+         * Writing the mirror in the control block as well dirties the cache
+         * line that also holds the produce value the claim loop reads. With a
+         * dirty line in the CPU cache, the PL's coherent writes to produce can
+         * leave the CPU's copy stale, the sender then waits for data that has
+         * already been published (send-us collapsing from 1.8 s to 0.06 s while
+         * drops pile up at 54,000/s), and the ring overflows until the line is
+         * finally written back. The mirror write bought nothing: the writer
+         * reads ps_consume from register 0x48. */
         wr32(sh->fw, REG_PS_CONSUME, frontier);
         sh->stat_pkts += MAX_GSO_SLOTS;
         sh->stat_batches++;
