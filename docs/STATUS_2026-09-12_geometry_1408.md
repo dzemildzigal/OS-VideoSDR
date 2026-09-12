@@ -90,3 +90,46 @@ then       1. re-copy /tmp/reset_run.sh (reboot clears /tmp) and recompiled shim
 
 The OpenCV display comes after that, wired as a separate stage so the receive
 loop never blocks on `imshow`.
+
+---
+
+## 7. Final measured state (2026-09-12, bit e5f015ad, slot 1408)
+
+```text
+board steady state
+  publish          62,933 slots/s        (2,095 segments x 30 fps)
+  sender           62,731 - 62,999 pkt/s  (requirement 62,850)
+  drops_delta      0 in every sample     (the 2% shortfall of the 1280 build is gone)
+  send-us          1.81 s of 2.00 s/s    (90%, as predicted)
+  cache maintenance 0 (bo-sync-us), coherent=1, fault=0
+
+end to end, 30 s, pc/runtime/rx_lossless.py
+  packets          1,857,009   (61,900/s)
+  authentication   100% - auth_bad=0, bad_frame=0, duplicates=0
+  frames complete  841 of 900  = 28.0 fps of the 30 published
+  padding check    841/841 frames had the expected 600 padding bytes
+  counters         1,884,877 span, 1,857,009 received -> 1.48% missing
+```
+
+### What is proven
+
+- The PL publishes 1280x720 at 30 fps, the sender moves it with zero drops and
+  every packet authenticates end to end.
+- The remaining 1.48% is lost on the PC before the socket: a bare count-only
+  loop loses the same share while using 26% of one core, and the NIC reports
+  discarded packets. The limit is the PC's receive path (512 receive
+  descriptors, fixed in this driver), not the board and not Python.
+- When the PC stalls, the board's ring eventually overflows (4,092 drops in one
+  30 s run), which is the intended back-pressure behaviour.
+
+### To reach a full 30.0 fps
+
+```text
+1. PC receive path, the actual limit:
+   apply the interrupt-moderation change with an adapter restart, or raise the
+   receive buffers in the registry (needs admin; the driver UI offers only 512)
+   otherwise treat 28.0 fps as the observed rate with ~1.5% loss
+2. Lower the packet rate further (bigger slot) if that moves the PC into its
+   comfort zone, at the cost of another geometry change and rebuild
+3. Nothing on the board side needs changing: 0 drops, 0 authentication failures
+```
