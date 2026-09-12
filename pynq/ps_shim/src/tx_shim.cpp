@@ -602,6 +602,16 @@ static void *tx_worker(void *arg)
             sh->release_batch++;
         }
         uint32_t frontier = (uint32_t)((sh->release_batch * MAX_GSO_SLOTS) & sh->ring_mask);
+        // Never let the consume index run ahead of what the writer published.
+        // The writer drops whenever (produce + 1) == consume, so a frontier one
+        // slot ahead of produce deadlocks the ring permanently: the writer sees
+        // a consumer that is ahead of it and drops every packet from then on.
+        // The check is wrapped-safe by comparing inside a half-ring window.
+        {
+            uint32_t produce_now = ctrl_load_acquire(&sh->ctrl[0]) & sh->ring_mask;
+            if (((frontier - produce_now) & sh->ring_mask) < (sh->ring_slots / 2u))
+                frontier = produce_now;
+        }
         ctrl_store_release(&sh->ctrl[1], frontier);
         wr32(sh->fw, REG_PS_CONSUME, frontier);
         sh->stat_pkts += MAX_GSO_SLOTS;
@@ -748,6 +758,21 @@ int main(int argc, char **argv)
     }
     wr32(fw, REG_WRITER_CONTROL, 1u);
 
+    /* Align the sender's batch accounting with what the writer has already
+     * published, and push that value as the consume index. Without this the
+     * two run on different origins whenever the writer was enabled before the
+     * sender started (the writer publishes within milliseconds of being
+     * enabled), the frontier can end up one slot ahead of produce, and the
+     * writer then drops forever. Stale ring content is skipped rather than
+     * sent, which is correct too: those are packets from an earlier session. */
+    usleep(20000);                                   // let the writer advance
+    uint32_t produce0 = ctrl_load_acquire(&ctrl[0]) & (ring_slots - 1u);
+    uint32_t aligned0 = produce0 & ~((uint32_t)MAX_GSO_SLOTS - 1u);
+    if (aligned0 != produce0)
+        produce0 = aligned0;                         // batch boundary
+    printf("tx_shim: starting at writer produce %u (batch %u)\n",
+           produce0, produce0 / MAX_GSO_SLOTS);
+
     uint32_t ring_mask = ring_slots - 1u;
     uint32_t consume = ctrl_load_acquire(&ctrl[1]) & ring_mask;
     uint32_t produce = rd32(fw, REG_PRODUCE_SLOT) & ring_mask;
@@ -784,6 +809,14 @@ int main(int argc, char **argv)
     SendShared sh;
     memset(&sh, 0, sizeof(sh));
     pthread_mutex_init(&sh.lock, NULL);
+    // Start where the writer currently is, not at batch 0: see the alignment
+    // note above. Both counters share the same origin, so the consume index can
+    // never run ahead of produce.
+    sh.claim_batch = produce0 / MAX_GSO_SLOTS;
+    sh.release_batch = produce0 / MAX_GSO_SLOTS;
+    wr32(fw, REG_PS_CONSUME, produce0);
+    printf("tx_shim: consume index pushed as %u (batch %" PRIu64 ")\n",
+           produce0, sh.claim_batch);
     sh.sock[0] = socks[0];
     sh.sock[1] = socks[1];
     sh.ring = ring;
