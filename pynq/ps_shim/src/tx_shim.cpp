@@ -517,8 +517,15 @@ static void *tx_worker(void *arg)
         unsigned idle_spins = 0;
 
         // Claim the next batch in order, only if the writer has published it.
+        // Read the produce index from the control block mirror in DDR, not from
+        // writer register 0x24. Two workers spin on this value, and hammering
+        // the AXI-Lite read path that way corrupts the reads: the slave
+        // finishes a read in two cycles and concurrent readers got zeros back,
+        // which stranded the sender at 0 packets/s while the PL kept
+        // publishing. The mirror is coherent now that the writer reaches DDR
+        // through the ACP, so it is both correct and cheap to read.
         pthread_mutex_lock(&sh->lock);
-        uint32_t produce = rd32(sh->fw, REG_PRODUCE_SLOT) & sh->ring_mask;
+        uint32_t produce = ctrl_load_acquire(&sh->ctrl[0]) & sh->ring_mask;
         batch_index = sh->claim_batch;
         batch_start = (uint32_t)((batch_index * MAX_GSO_SLOTS) & sh->ring_mask);
         uint32_t available = (produce - batch_start) & sh->ring_mask;
