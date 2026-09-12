@@ -364,12 +364,18 @@ static inline void ctrl_store_release(volatile uint32_t *word, uint32_t value)
     __sync_synchronize();
 }
 
+/* Destination for sendto(). The sockets are not connected on purpose: see
+ * make_tx_socket(). */
+static struct sockaddr_in g_dst;
+static int g_dst_valid = 0;
+
 static int send_gso(int sock, const void *data, size_t bytes, int do_send)
 {
     if (!do_send)
         return 0;
 
-    ssize_t sent = send(sock, data, bytes, 0);
+    ssize_t sent = sendto(sock, data, bytes, 0,
+                          (const struct sockaddr *)&g_dst, sizeof(g_dst));
     if (sent < 0) {
         if (errno != EINTR && errno != EAGAIN && errno != ENOBUFS)
             perror("send(UDP GSO)");
@@ -440,11 +446,19 @@ static int make_tx_socket(const Options &opt, uint32_t slot_stride)
         close(sock);
         return -1;
     }
-    if (connect(sock, (const struct sockaddr *)&dst, sizeof(dst)) < 0) {
-        perror("connect");
-        close(sock);
-        return -1;
-    }
+    g_dst = dst;
+    g_dst_valid = 1;
+
+    /* Deliberately NOT connect()ing this socket.
+     *
+     * A connected UDP socket receives ICMP port-unreachable from the peer as a
+     * send() error. With no receiver running (or a receiver that restarts) that
+     * error arrives for every packet, send() fails, and the sender holds the
+     * batch and retries - which fills the ring and shows up as the sender
+     * stopping and resuming in bursts. Measured with no listener at all:
+     * publish 0/s with 62,966 drops/s, then a clean burst, then stalled again.
+     * An unconnected socket is never told about those ICMP errors. */
+
     return sock;
 }
 
