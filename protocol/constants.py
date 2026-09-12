@@ -14,7 +14,10 @@ HEADER_STRUCT_FORMAT = "!HBBIHIHHQBBHQBB"
 HEADER_SIZE_BYTES = 40
 
 DEFAULT_TAG_LENGTH = 16
-MAX_PAYLOAD_BYTES = 1200
+# Largest segment payload the transport accepts. The 1408-byte slot carries
+# 8 (nonce prefix) + 40 (header) + payload + 16 (tag) + 24 (padding), so the
+# payload is 1320 bytes; the cap matches the packetizer's MAX_PAYLOAD_BYTES.
+MAX_PAYLOAD_BYTES = 1400
 
 # B.2/B.3 PL transport contract. The GCM tag covers only the authenticated
 # body. The trailing bytes exist only to make each UDP GSO segment 1408 bytes:
