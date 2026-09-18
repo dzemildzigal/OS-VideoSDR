@@ -1,246 +1,186 @@
 # OS-VideoSDR
 
-Open source encrypted low-latency video transport development for PYNQ-Z2 and AntSDR.
-
-## Reset Notice (May 2026)
-
-This repository is now the single integration home for the video pipeline.
-
-V1 scope:
-- PYNQ: HDMI in -> AES encrypt in PL -> DDR DMA -> PS Ethernet sender
-- PC: UDP server -> AES decrypt in software -> OpenCV display
-
-Not in V1:
-- PYNQ HDMI out path (deferred until V1 gates pass)
-
-## Mission
-
-Build an end-to-end encrypted live video link in three stages:
-
-1. Wired proof-of-concept over 1 GbE (PYNQ and PC).
-2. SDR transport on AntSDR E310 with the same packet and crypto contract.
-3. Frequency hopping after the non-hopping radio path is stable.
-
-## Current Status
-
-- Phase C-D implementation: unified runtime spine with config loader, nonce enforcement, and display integration.
-- Protocol contract is implemented and validated.
-- Unified runtime entrypoints ready for bring-up:
-  - **PYNQ TX:** [pynq/runtime/main.py](pynq/runtime/main.py) - synthesizes or captures HDMI, encrypts, sends UDP
-  - **PC RX:** [pc/runtime/main_rx.py](pc/runtime/main_rx.py) - receives UDP, decrypts, displays (OpenCV or headless)
-  - **Config:** [config_loader.py](config_loader.py) - unified YAML-based config for both sides (network.yaml, crypto.yaml)
-- Crypto modes supported:
-  - `none` (plaintext)
-  - `aesgcm` (software, always available on PC)
-  - `dma` (hardware adapter on PYNQ, requires bitstream)
-- Integration tests present:
-  - Roundtrip TX encrypt → RX decrypt validation
-  - Nonce monotonicity and replay window enforcement
-  - Frame reassembly integrity (in-order, out-of-order, multi-frame)
-- PS C shim scaffold available for lower-overhead transport backend:
-  - [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
-  - Selectable `socket` and `ring` transport backends
-- Hardware implementation references:
-  - [docs/pl_ring_uio_spec.md](docs/pl_ring_uio_spec.md)
-  - [docs/templates/ring_uio_template.dtsi](docs/templates/ring_uio_template.dtsi)
-  - [scripts/check_uio_ring_map.sh](scripts/check_uio_ring_map.sh)
-
-Important architecture note:
-
-- This repo owns integration orchestration end-to-end; AES core hardware ownership remains in AES-256-SystemVerilog.
-- Production direction remains PL-first datapath with PS as thin networking and control shim.
-- Legacy split entrypoints are being removed in favor of one orchestrator per side.
-
-## Simple Terms
-
-- Frame: one whole video image payload handled by the app.
-- Packet: one UDP datagram carrying a segment of a frame.
-- Chunk: how much payload is sent to AES in one crypto call.
-
-Granularity mapping:
-
-- Packet granularity: one AES call per packet.
-- Frame granularity: one AES call per frame.
-- Chunk granularity: one AES call per medium-size block between packet and frame.
-
-## What Works Now
-
-- Header validation, replay checks, segmentation, and reassembly paths are implemented.
-- Synthetic traffic generation and telemetry reporting are stable.
-- Runtime safety/operability features are in place:
-  - max runtime and max idle exits on RX
-  - throughput reporting (average and instant)
-  - inter-packet pacing on TX
-
-## Known Limits Right Now
-
-- The currently validated DMA overlay path is encrypt-focused.
-- RX DMA mode requires a decrypt-capable overlay and is guarded by explicit runtime checks.
-- U10 and U15 acceptance gates are still open for production architecture.
-
-## Latest Benchmark Highlights
-
-### Baseline Mode Matrix (Synthetic)
-
-- none: about 15 Mb/s class
-- aesgcm software: about 9 Mb/s class
-- dma with packet granularity: about 3 Mb/s class
-
-### PS C Shim Transport A/B (2026-05-11)
-
-Identical bounded run (`frames=120`, `fps=15`, `frame_bytes=120000`, `segment_bytes=1200`):
-
-- socket TX: `14.40 Mb/s`
-- ring TX (mmap prototype): `14.40 Mb/s`
-- interpretation: both are frame-rate limited at this profile.
-
-Stress run (`max-runtime-s=20`, `fps=500`, no inter-packet gap):
-
-- socket TX: `251.78 Mb/s`, socket RX final: `225.39 Mb/s`
-- ring TX (mmap prototype): `480.00 Mb/s`, ring RX final: `433.29 Mb/s`
-- interpretation: ring prototype is about `1.7x` faster than socket transport for this stress shape.
-
-UIO discovery on board:
-
-- `/dev/uio0`: `audio-codec-ctrl`
-- `/dev/uio1`: `fabric`
-- no dedicated ring-named device was present in `/dev`.
-
-UIO fail-fast validation (latest run):
-
-- `/dev/uio1` map0 size: `0x00010000` (64 KiB).
-- Requested ring layout (`slot_count=8192`, `slot_payload=4096`) requires `34078752` bytes.
-- Backend correctly returns `ENOSPC` with explicit message that UIO map is too small.
-- Conclusion: `/dev/uio1` is not a viable ring data-memory target for current profile.
-- Operational guidance: keep performance benchmarking on `/dev/shm/osv_ring.bin` until a dedicated ring-memory UIO mapping is provided by hardware/DT.
-
-### Packet vs Frame DMA Granularity (Validated End-to-End)
-
-Test shape:
-
-- frames=180
-- fps=15
-- frame payload=120000 bytes
-- packet payload=1200 bytes
-- inter-packet-gap-us=100
-
-Observed results:
-
-- Packet granularity:
-  - TX throughput: 2.93 Mb/s
-  - TX dma calls: 18000
-  - RX: frames=180 packets=18000 drops=0 decrypt_fail=0 reorder=0
-  - p95 latency: 353.64 ms
-- Frame granularity:
-  - TX throughput: 15.07 Mb/s
-  - TX dma calls: 180
-  - RX: frames=180 packets=18000 drops=0 decrypt_fail=0 reorder=0
-  - p95 latency: 53.03 ms
-
-### Chunk Sweep (Validated End-to-End)
-
-Chunk mode was measured with the same test shape.
-
-- chunk 4800:
-  - TX throughput: 8.90 Mb/s
-  - TX dma calls: 4500
-  - p95 latency: 146.11 ms
-- chunk 12000:
-  - TX throughput: 14.13 Mb/s
-  - TX dma calls: 1800
-  - p95 latency: 93.34 ms
-- chunk 24000:
-  - TX throughput: 15.07 Mb/s
-  - TX dma calls: 900
-  - p95 latency: 71.71 ms
-- chunk 48000:
-  - TX throughput: 15.07 Mb/s
-  - TX dma calls: 540
-  - p95 latency: 65.05 ms
-- chunk 96000:
-  - TX throughput: 15.07 Mb/s
-  - TX dma calls: 360
-  - p95 latency: 61.21 ms
-
-All chunk runs completed with RX parity (frames=180, packets=18000), no drops/decrypt failures/reorder, and zero UDP receive buffer error growth.
-
-Interpretation:
-
-- The primary gain comes from reducing per-call orchestration overhead, not changing AES core behavior.
-- Fewer, larger crypto calls are much more efficient than many tiny calls in this runtime architecture.
-- For this 120000-byte frame profile, frame mode is currently the best latency choice at max observed throughput.
-
-Practical operating choice for current profile:
-
-- Default: `frame` crypto granularity.
-- Optional: large `chunk` values (`48000` to `96000`) when integration constraints require chunk boundaries while keeping near-frame throughput.
-
-### Breakpoint Sweep (Larger Frame Payloads)
-
-Additional end-to-end runs were executed at `frames=90`, `fps=15`, `segment_bytes=1200`, `inter-packet-gap-us=100`:
-
-- `frame_bytes=240000`:
-  - frame mode: stable, `throughput=23.70`, `latency_p95_ms=108.54`, no UDP error growth.
-  - chunk 96000: stable, `throughput=22.03`, `latency_p95_ms=125.64`, no UDP error growth.
-- `frame_bytes=480000`:
-  - frame mode: unstable (`frames_completed=73/90`), UDP receive buffer errors increased by `174`.
-  - chunk 96000: stable (`90/90`), no additional UDP error growth.
-- `frame_bytes=960000`:
-  - frame mode: unstable (`45/90`), UDP receive buffer errors increased by `6126`.
-  - chunk 96000: unstable (`45/90`), UDP receive buffer errors increased by `5640`.
-
-Interpretation from breakpoint sweep:
-
-- Up to `240000` bytes/frame, frame mode remains best overall.
-- Around `480000` bytes/frame, chunk mode (`96000`) is more robust than frame mode.
-- At `960000` bytes/frame with current pacing and software RX verify path, both modes exceed the stable envelope.
-
-## Reproducible Commands
-
-Use the maintained copy-paste benchmark recipe in:
-
-- [docs/next_machine_handoff.md](docs/next_machine_handoff.md)
-
-Start at the section:
-
-- Corrected Packet vs Frame Benchmark (Copy/Paste)
-
-## PS C Shim Quick Start
-
-Build on PYNQ Linux:
-
-- `chmod +x pynq/ps_shim/build.sh`
-- `./pynq/ps_shim/build.sh`
-
-Loopback smoke test:
-
-- RX: `./pynq/ps_shim/build/ps_shim --mode rx --bind-ip 127.0.0.1 --port 5000 --max-runtime-s 20 --frame-bytes 120000 --segment-bytes 1200`
-- TX: `./pynq/ps_shim/build/ps_shim --mode tx --target-ip 127.0.0.1 --port 5000 --frames 120 --fps 15 --frame-bytes 120000 --segment-bytes 1200 --inter-packet-gap-us 100`
-
-More details:
-
-- [pynq/ps_shim/README.md](pynq/ps_shim/README.md)
-
-## Repository Guide
-
-- [docs](docs): architecture decisions, protocol policy, handoff notes
-- [config](config): runtime settings
-- [protocol](protocol): shared packet schema and validation
-- [pynq/runtime](pynq/runtime): board-side orchestrator, ingest, crypto adapter, transport
-- [pynq/ps_shim](pynq/ps_shim): PS-side C transport shim scaffold for PL-first migration
-- [pc](pc): host-side runtime tooling (decrypt and display)
-- [tests](tests): unit and integration validation
-
-## Next Engineering Steps
-
-1. Complete V1 pipeline: HDMI in on PYNQ to AES encrypt in PL to PS UDP sender.
-2. Complete PC receiver path: receive, decrypt, and display with OpenCV.
-3. Keep protocol and nonce policy unchanged while replacing legacy runtime entrypoints.
-4. Use PS C shim as optional performance backend after Python orchestrator parity is achieved.
-5. Defer HDMI out until V1 network pipeline gates are fully green.
-
-## Source of Truth for Handover
-
-For machine migration, session evidence, and exact run commands use:
-
-- [docs/next_machine_handoff.md](docs/next_machine_handoff.md)
+Live video over Ethernet, encrypted end to end with AES-256-GCM.
+
+A PYNQ-Z2 board captures an HDMI input, encrypts every video packet in the
+FPGA, parks the packets in a DDR ring, and pushes them out of its Gigabit
+port. A PC receives them, checks every authentication tag, rebuilds the frames
+and shows or records the video.
+
+```text
+   HDMI source            PYNQ-Z2 (Zynq-7020)                       PC
+  ┌───────────┐   ┌──────────────────────────────────┐   ┌────────────────────┐
+  │ 720p60    │   │ packetizer → AES-256-GCM → DDR   │   │ UDP → authenticate │
+  │ video out ├──►│              ring      ring → UDP ├──►│ → reassemble → MP4 │
+  └───────────┘   │   (FPGA)          (FPGA)  (PS)    │   │   or live window   │
+                  └──────────────────────────────────┘   └────────────────────┘
+```
+
+The FPGA side lives in the companion repository
+**[AES-256-SystemVerilog](https://github.com/dzemildzigal/AES-256-SystemVerilog)** —
+that is where the AES core, the packetizer, the DDR ring writer and the
+bitstream build live. This repository is the system around it: the PS sender,
+the protocol, the PC receiver and the tests.
+
+## What works today
+
+```text
+video         1280x720 RGB888 at 30 fps
+on the wire   62,850 packets/s (2,095 segments per frame), about 88 MB/s
+crypto        AES-256-GCM per packet, 100% of packets authenticate
+board         sends with zero drops while the machine is quiet
+PC            receives about 80% of packets on the test NIC (see Limits)
+```
+
+## How it works
+
+```text
+1. The packetizer cuts every video frame into 2,095 segments of 440 pixels
+   and wraps each one in a small header. The source runs at 60 Hz, so every
+   second frame is dropped: that is where the 30 fps comes from.
+
+2. The AES core encrypts each segment and appends a 16-byte tag, so a packet
+   that is altered or replayed on the wire fails the tag check on the PC.
+
+3. The ring writer writes each finished packet into a slot of a DDR ring
+   (2,048 slots of 1,408 bytes) and publishes a counter. The ring holds about
+   33 ms of video, which is what absorbs moment-to-moment timing noise.
+
+4. The PS sender (tx_shim) follows that counter, and sends the slots in order
+   with UDP GSO, 32 slots per system call, from two sockets on two cores.
+   It tells the writer which slots it has finished with, so the FPGA can
+   reuse them.
+
+5. The PC authenticates every packet, puts the segments back in order and
+   hands complete frames to a display or a video file.
+```
+
+## Quick start
+
+### 1. Get both repositories
+
+```bash
+git clone https://github.com/dzemildzigal/OS-VideoSDR
+git clone https://github.com/dzemildzigal/AES-256-SystemVerilog
+```
+
+### 2. Put the overlay on the board
+
+Build it in the AES repository (about an hour in Vivado), or copy a released
+pair. The board expects them here:
+
+```text
+/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/overlays/tx/hdmi_aes_tx.bit
+/home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/overlays/tx/hdmi_aes_tx.hwh
+```
+
+### 3. Start the board side
+
+```bash
+# as root on the board, in a login shell with XRT available
+cd /home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/runtime
+export XILINX_XRT=/usr
+python3 tx_daemon.py \
+    --bitstream ../overlays/tx/hdmi_aes_tx.bit \
+    --dst-host 192.168.0.37 --dst-port 5600 \
+    --key-hex 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f \
+    --payload-bytes 1320 --configure-only --aes-freq 100
+```
+
+The daemon loads the overlay, sets the design clock, programmes the AES
+session and then holds the overlay. It deliberately does not touch the ring.
+
+```bash
+# build and start the sender (same login shell, as root)
+cd /home/xilinx/jupyter_notebooks/OS-VideoSDR/pynq/ps_shim
+./build.sh                     # produces build/tx_shim
+./build/tx_shim 192.168.0.37 5600 --workers 2 --pin --sndbuf 180224
+```
+
+`--payload-bytes 1320` must match the bitstream. The daemon checks it against
+the handoff file and refuses to start on a mismatch, because a wrong value
+makes the AES hash the wrong length and every tag fails while the ciphertext
+still looks perfect.
+
+### 4. Receive on the PC
+
+```bash
+cd OS-VideoSDR
+pip install cryptography numpy opencv-python
+
+# record 60 s to recordings/osv_720p30_<timestamp>.mp4
+PYTHONPATH=. python pc/runtime/rx_record.py 60
+
+# or watch it live (opens an "OS-VideoSDR" window; q or Esc quits)
+PYTHONPATH=. python pc/runtime/rx_display.py 120
+```
+
+Both print packets per second, authentication failures and frame
+completeness while they run.
+
+## Tools on the PC
+
+| file | what it does |
+|------|--------------|
+| `pc/runtime/rx_record.py` | records the stream to an MP4 |
+| `pc/runtime/rx_display.py` | live OpenCV window |
+| `pc/runtime/rx_snapshot.py` | saves one frame as a PNG and prints pixel samples |
+| `pc/runtime/rx_lossless.py` | lean receiver that only counts frames, for measurements |
+| `pc/runtime/main_rx.py` | the full runtime with config files and a display abstraction |
+| `pc/runtime/aes_gcm_sw.py` | software AES-GCM helper |
+
+## Repository layout
+
+```text
+protocol/        packet header, constants, validation, replay window
+pc/runtime/      everything that runs on the PC
+pynq/runtime/    tx_daemon.py: overlay, clock, AES session configuration
+pynq/ps_shim/    tx_shim: the DDR-ring-to-UDP sender (C++)
+pynq/tools/      board samplers used to debug stability
+tests/           unit and integration tests (python -m pytest tests)
+docs/            the design, plans, status reports and measurements
+config/          network.yaml, crypto.yaml
+```
+
+## Limits you should know
+
+```text
+1. The PC side loses about 20% of packets on the test NIC (Windows, Realtek
+   GbE). A frame needs all 2,095 of its segments, so the picture is live but
+   shows patches where packets were lost. Fewer, larger packets would fix it,
+   but the 1500-byte MTU blocks that, and jumbo frames are not available: the
+   board's macb driver refuses MTU above 1500 and the test switch drops them.
+
+2. There is no FEC and no retransmission. Every lost packet costs part of a
+   frame. That is the main thing standing between this and a production link.
+
+3. The design expects exactly 720p60 on the HDMI input; the packetizer closes
+   frames by counting pixels. A different source mode would need work.
+
+4. 720p is where the geometry sits today, not full HD. 1080p would need a
+   different pixel format or a bigger budget for CPU and bandwidth.
+
+5. The AES key is passed on the command line, so it is visible in `ps`. Use a
+   file with permissions before using this anywhere real.
+```
+
+## Documentation
+
+```text
+docs/architecture.md                     the system and its building blocks
+docs/protocol_spec.md                    wire format and header fields
+docs/DESIGN_2026-08-23_phase_B.md        the transport redesign rationale
+docs/PLAN_2026-08-24_phase_B_exact.md    the exact plan and acceptance criteria
+docs/STATUS_2026-09-12_geometry_1408.md  latest status, measurements, root causes
+docs/PHASE_C_D_COMPLETION.md             runtime, config and test scaffolding
+docs/crypto_policy.md                    key, nonce and AAD policy
+```
+
+## Tests
+
+```bash
+python -m pytest tests -q
+```
+
+Hardware measurements are in `docs/STATUS_*.md`; each one lists the commands
+that produced the numbers.
