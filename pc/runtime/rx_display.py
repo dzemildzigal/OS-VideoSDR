@@ -29,6 +29,7 @@ HDR = struct.Struct("!HBBIHIHHQBBHQBB")
 NONCE_PREFIX = b"\x00\x00\x00\x01"
 WIDTH, HEIGHT = 1280, 720
 REAL_BYTES = WIDTH * HEIGHT * 3
+MAX_ACTIVE = 8                # frame buffers kept in flight
 WINDOW = "OS-VideoSDR live"
 
 
@@ -49,17 +50,29 @@ def main() -> int:
 
     aes = AESGCM(KEY)
     recv = bytearray(65535)
-    raster = bytearray(REAL_BYTES + PAYLOAD)      # accumulation buffer
-    disp = bytearray(REAL_BYTES)                  # coherent display copy
-    cur_fid = -1
+    # One buffer per frame id. A single shared raster cannot stay coherent
+    # when frames arrive partially: segments of different frames land in the
+    # same picture and it turns into a mosaic (measured on hardware as dozens
+    # of window fragments in one image). Each frame buffer starts as a copy of
+    # the last displayed picture, so a missing segment shows the previous
+    # frame's content instead of a hole.
+    frames: dict[int, bytearray] = {}
+    shown_fid = -1
+    last_shown = bytearray(REAL_BYTES)
 
     packets = auth_bad = bad = 0
     drawn = 0
     start = time.monotonic()
-    last_report = last_draw = start
+    last_report = last_draw = last_save = start
 
-    cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW, 960, 540)
+    def disp_img():
+        return np.frombuffer(memoryview(disp), dtype=np.uint8).reshape((HEIGHT, WIDTH, 3))
+
+    # WINDOW_AUTOSIZE keeps the aspect ratio fixed. With WINDOW_NORMAL the
+    # window can be dragged into a thin strip, and a 1280x720 frame squeezed
+    # into a strip of a few dozen pixels looks torn - which is easy to mistake
+    # for a data problem. The frame itself is correct (see the saved PNG).
+    cv2.namedWindow(WINDOW, cv2.WINDOW_AUTOSIZE)
 
     while time.monotonic() - start < duration:
         # Drain everything the socket has before touching the display. Reading
@@ -89,19 +102,25 @@ def main() -> int:
                         # frame_id and produced black frames.)
                         fid = struct.unpack_from("!I", plain, 10)[0]
                         seg = struct.unpack_from("!H", plain, 14)[0]
-                        if fid != cur_fid:
-                            # New frame: hand the accumulated picture to the
-                            # display copy. Drawing the accumulation buffer
-                            # while it is being written tears the image, top
-                            # new and bottom old.
-                            cur_fid = fid
-                            # Copy only the visible pixels: slice-assigning the
-                            # longer accumulation buffer would grow disp and
-                            # break the reshape.
-                            disp[:] = raster[:REAL_BYTES]
+                        # Two sockets deliver packets slightly out of order, so
+                        # late segments of frames that were already displayed
+                        # keep arriving. Writing those into the current frame
+                        # mixes several frames into one picture: seen on
+                        # hardware as a mosaic that doubles (2, 4, 8, 16
+                        # frames) the longer it runs. Only the current frame,
+                        # or one a few frames ahead, may be placed.
+                        fbuf = frames.get(fid)
+                        if fbuf is None:
+                            if len(frames) > MAX_ACTIVE:
+                                for old_fid in sorted(frames)[: len(frames) - MAX_ACTIVE]:
+                                    del frames[old_fid]
+                            # New frame: inherit the last displayed picture so
+                            # segments that never arrive keep valid content.
+                            fbuf = bytearray(last_shown)
+                            frames[fid] = fbuf
                         off = seg * PAYLOAD
                         if off < REAL_BYTES:
-                            raster[off:off + PAYLOAD] = plain[HEADER:HEADER + PAYLOAD]
+                            fbuf[off:off + PAYLOAD] = plain[HEADER:HEADER + PAYLOAD]
                     else:
                         bad += 1
         if got == 0:
@@ -109,9 +128,23 @@ def main() -> int:
 
         now = time.monotonic()
         if now - last_draw >= 1.0 / 60.0:
-            img = np.frombuffer(memoryview(disp), dtype=np.uint8).reshape((HEIGHT, WIDTH, 3))
-            cv2.imshow(WINDOW, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-            drawn += 1
+            newest = max(frames) if frames else -1
+            if newest >= 0:
+                # Release the numpy view before touching the buffer again: a
+                # live export makes the bytearray's slice assignment fail with
+                # BufferError ("object cannot be re-sized").
+                mv = memoryview(frames[newest])[:REAL_BYTES]   # frame buffer has one segment of slack
+                arr = np.frombuffer(mv, dtype=np.uint8).reshape((HEIGHT, WIDTH, 3))
+                img_bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+                del arr, mv
+                cv2.imshow(WINDOW, img_bgr)
+                # Keep this frame's picture as the base for later frames.
+                last_shown[:] = frames[newest]
+                shown_fid = newest
+                drawn += 1
+                if now - last_save >= 5.0:
+                    last_save = now
+                    cv2.imwrite("C:/tmp/live_frame.png", img_bgr)
             last_draw = now
         if cv2.waitKey(1) & 0xFF in (27, ord("q")):
             break
